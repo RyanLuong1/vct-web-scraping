@@ -5,14 +5,14 @@ from bs4 import BeautifulSoup
 import requests
 import time
 import io
-import boto3
+# import boto3
 import pandas as pd
 import asyncio
 import aiohttp
 
 
 async def main():
-    semaphore_count = 25
+    semaphore_count = 5
     matches_semaphore = asyncio.Semaphore(semaphore_count)
     # year = input(f"Input the VCT year: ")
     year = 2025
@@ -23,6 +23,15 @@ async def main():
     current_time = now.strftime("%H:%M:%S")
     print("Current Time =", current_time)
 
+    ### testing code
+    # with open("overview_card.html", "r", encoding="utf-8") as file:
+    #     soup = BeautifulSoup(file, "html.parser")
+    #     card = soup.find('a')
+    ### testing code ends
+    # print(card)
+
+    #original code don't forget to uncomment it
+
     url = f"https://www.vlr.gg/vct-{year}"
     page = requests.get(url)
     soup = BeautifulSoup(page.content, "html.parser")
@@ -31,9 +40,9 @@ async def main():
 
     tournaments_ids = {}
 
-    s3_client = boto3.client(
-        's3'
-    )
+    # s3_client = boto3.client(
+    #     's3'
+    # )
 
     tournament_cards = soup.find("div", class_="events-container").find_all("div", class_="events-container-col")[-1].find_all("a", class_="wf-card mod-flex event-item")
 
@@ -55,12 +64,11 @@ async def main():
     matches_cards = {}
 
     stages_ids = {}
-
     for tournament, url in urls.items():
         page = requests.get(url)
 
         soup = BeautifulSoup(page.content, "html.parser")
-        stages = soup.find("span", class_="wf-dropdown mod-all").find_all("a")
+        stages = soup.find("div", class_="col mod-1").find_all("a")
         stages_ids[tournament] = {}
         for stage in stages:
             stage_name = stage.text.strip()
@@ -72,7 +80,13 @@ async def main():
             all_modules = cards.find_all("a")
             modules.extend(all_modules)
         matches_cards[tournament] = modules
-    
+
+    ###original code ends
+
+    #remember to remove this
+    # matches_cards_test = {'Valorant Champions 2026': [card]}
+    # print(f"This is matches cards: {matches_cards_test}")
+    #end of testing code
 
     dataframes = {}
     all_results = {"scores": [],
@@ -87,16 +101,17 @@ async def main():
                    "rounds_kills": [],
                    "eco_stats": [],
                    "eco_rounds": [],
+                   "player_loadouts": [],
                    "team_mapping": {},
                    "teams_ids": {},
                    "players_ids": {},
                    "tournaments_stages_matches_games_ids": []}
-     
     # test = {"Champions Tour Turkey Stage 1: Challengers 3": matches_cards["Champions Tour Turkey Stage 1: Challengers 3"]}
 
     # async with aiohttp.ClientSession() as session:
     #     tasks = [scraping_matches_data(tournament_name, cards, tournaments_ids, stages_ids, matches_semaphore, session) for tournament_name, cards in test.items()]
     #     results = await asyncio.gather(*tasks)
+
 
     async with aiohttp.ClientSession() as session:
         tasks = [scraping_matches_data(tournament_name, cards, tournaments_ids, stages_ids, matches_semaphore, session) for tournament_name, cards in matches_cards.items()]
@@ -158,6 +173,11 @@ async def main():
                                             columns=["Tournament", "Stage", "Match Type", "Match Name", "Map", "Team", "Type", "Initiated", "Won"])
     dataframes["eco_rounds"] = pd.DataFrame(all_results["eco_rounds"],
                                             columns=["Tournament", "Stage", "Match Type", "Match Name", "Map", "Round Number", "Team", "Loadout Value", "Remaining Credits", "Type", "Outcome"])
+    dataframes["player_loadouts"] = pd.DataFrame(all_results["player_loadouts"],
+                                            columns=["Tournament", "Stage", "Match Type", "Match",
+                                                     "Map", "Round", "Team", "Player", "Side",
+                                                     "Agent", "Credits Spent", "Credits Remaining",
+                                                     "Armor", "Weapon"])
     dataframes["team_mapping"] = pd.DataFrame(list(all_results["team_mapping"].items()),
                                               columns=["Abbreviated", "Full Name"])
     dataframes["teams_ids"] = pd.DataFrame(list(all_results["teams_ids"].items()),
@@ -181,17 +201,20 @@ async def main():
     start_time = time.time()
 
     for file_name, dataframe in dataframes.items():
-        csv_buffer = io.StringIO()
-        dataframe.to_csv(csv_buffer, index=False)
+        # csv_buffer = io.StringIO()
+        # dataframe.to_csv(csv_buffer, index=False)
         if "ids" in file_name:
-            directory = f"vct_{year}/ids/{file_name}.csv"
-            # dataframe.to_csv(f"vct_{year}/ids/{file_name}.csv", encoding="utf-8", index=False)
+            # directory = f"vct_{year}/ids/{file_name}.csv"
+            dataframe.to_csv(f"vct_{year}/ids/{file_name}.csv", encoding="utf-8", index=False)
         else:
-            directory = f"vct_{year}/matches/{file_name}.csv"
-            # dataframe.to_csv(f"vct_{year}/matches/{file_name}.csv", encoding="utf-8", index=False)
+            # directory = f"vct_{year}/matches/{file_name}.csv"
+            dataframe.to_csv(f"vct_{year}/matches/{file_name}.csv", encoding="utf-8", index=False)
+            # dataframe.to_csv(f"vct_{year}_TEST/ids/{file_name}_TEST.csv", encoding="utf-8", index=False)
+        # else:
+        #     dataframe.to_csv(f"vct_{year}_TEST/matches/{file_name}_TEST.csv", encoding="utf-8", index=False)
         # dataframe.to_csv(f"test/{file_name}.csv", encoding="utf-8", index=False)
-        csv_buffer.seek(0)
-        s3_client.put_object(Bucket="raw-data-vct", Key=directory, Body=csv_buffer.getvalue())
+        # csv_buffer.seek(0)
+        # s3_client.put_object(Bucket="raw-data-vct", Key=directory, Body=csv_buffer.getvalue())
 
     end_time = time.time()
 

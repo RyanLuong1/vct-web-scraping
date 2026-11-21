@@ -3,7 +3,7 @@ import math
 from data_clean.data_clean import csv_to_df, convert_to_int
 
 def main():
-    years = [2021, 2022, 2023, 2024]
+    years = [2021, 2022, 2023, 2024, 2025, 2026]
     players_dfs = {}
     players = pd.DataFrame()
     teams_dfs = {}

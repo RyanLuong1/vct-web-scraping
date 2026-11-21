@@ -10,18 +10,18 @@ import time
 import io
 import aiohttp
 import requests
-import boto3
-
+# import boto3
+import numpy as np
 
 async def main():
-    semaphore_count = 10
+    semaphore_count = 5
     url_semaphore = asyncio.Semaphore(5)
     pick_rates_semaphore = asyncio.Semaphore(semaphore_count)
-    # year = input(f"Input the VCT year: ")
-    year = 2025
-    s3_client = boto3.client(
-        's3'
-    )
+    year = input(f"Input the VCT year: ")
+    # year = 2025
+    # s3_client = boto3.client(
+    #     's3'
+    # )
 
     start_time = time.time()
 
@@ -60,6 +60,7 @@ async def main():
     async with aiohttp.ClientSession() as session:
         tasks = [generate_urls_combination(tournament_name, stages_ids, match_types_ids, url, filtered_urls, url_semaphore, session) for tournament_name, url in urls.items()]
         await asyncio.gather(*tasks)
+
 
     async with aiohttp.ClientSession() as session:
         tasks = [scraping_agents_data(tournament_name, stages, pick_rates_semaphore, session) for tournament_name, stages in filtered_urls.items()]
@@ -116,7 +117,20 @@ async def main():
     dataframes["tournaments_stages_match_types_ids"] = pd.DataFrame(all_results["tournaments_stages_match_types_ids"],
                                                                     columns=["Tournament", "Tournament ID", "Stage", "Stage ID", "Match Type", "Match Type ID"])
     
+    for name in ["maps_stats", "agents_pick_rates", "teams_picked_agents"]:
+        df = dataframes[name]
 
+        df["Aggregation Level"] = np.select(
+            [
+                df["Stage"] == "All Stages",
+                df["Match Type"] == "All Match Types"
+            ],
+            [
+                "Tournament",
+                "Stage"
+            ],
+            default="Substage"
+        )
 
 
     end_time = time.time()
@@ -128,16 +142,19 @@ async def main():
     print(f"Datascraping time: {int(hours)} hours, {int(minutes)} minutes, {int(seconds)} seconds")
 
     for file_name, dataframe in dataframes.items():
-        csv_buffer = io.StringIO()
-        dataframe.to_csv(csv_buffer, index=False)
+        # csv_buffer = io.StringIO()
+        # dataframe.to_csv(csv_buffer, index=False)
         if "ids" in file_name:
-            directory = f"vct_{year}/ids/{file_name}.csv"
-            # dataframe.to_csv(f"test/vct_{year}/ids/{file_name}.csv", encoding="utf-8", index=False)
+            # directory = f"vct_{year}/ids/{file_name}.csv"
+            dataframe.to_csv(f"vct_{year}/ids/{file_name}.csv", encoding="utf-8", index=False)
         else:
-            directory = f"vct_{year}/agents/{file_name}.csv"
-            # dataframe.to_csv(f"test/vct_{year}/agents/{file_name}.csv", encoding="utf-8", index=False)
-        csv_buffer.seek(0)
-        s3_client.put_object(Bucket="raw-data-vct", Key=directory, Body=csv_buffer.getvalue())
+            # directory = f"vct_{year}/agents/{file_name}.csv"
+            dataframe.to_csv(f"vct_{year}/agents/{file_name}.csv", encoding="utf-8", index=False)
+        # csv_buffer.seek(0)
+        # s3_client.put_object(Bucket="raw-data-vct", Key=directory, Body=csv_buffer.getvalue())
+        #     dataframe.to_csv(f"vct_{year}_TEST/ids/{file_name}_TEST.csv", encoding="utf-8", index=False)
+        # else:
+        #     dataframe.to_csv(f"vct_{year}_TEST/agents/{file_name}_TEST.csv", encoding="utf-8", index=False)
 
     current_time = now.strftime("%H:%M:%S")
     print("End Time =", current_time)

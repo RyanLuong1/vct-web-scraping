@@ -7,15 +7,39 @@ import asyncio
 import aiohttp
 import pandas as pd
 import requests
-import boto3
+# import boto3
 import io
 
 
+stats_titles = {
+    "maps": "Maps Played",
+    "rnd": "Rounds Played",
+    "rating": "Rating",
+    "acs": "Average Combat Score",
+    "kd": "Kills:Deaths",
+    "kast": "Kill, Assist, Trade, Survive %",
+    "adr": "Average Damage Per Round",
+    "kpr": "Kills Per Round",
+    "apr": "Assists Per Round",
+    "fkfd": "First Kills: First Deaths",
+    "fkpr": "First Kills Per Round",
+    "fdpr": "First Deaths Per Round",
+    "hsp": "Headshot %",
+    "clp": "Clutch Success %",
+    "cl": "Clutches (won/played)",
+    "kmax": "Maximum Kills in a Single Map",
+    "k": "Kills",
+    "d": "Deaths",
+    "a": "Assists",
+    "fk": "First Kills",
+    "fd": "First Deaths"
+}
+
 async def main():
-    url_semaphore = asyncio.Semaphore(10)
+    url_semaphore = asyncio.Semaphore(5)
     player_stats_semaphore = asyncio.Semaphore(5) 
-    # year = input(f"Input the VCT year: ")
-    year = 2025
+    year = input(f"Input the VCT year: ")
+    # year = 2025
     start_time = time.time()
 
     now = datetime.now()
@@ -28,9 +52,9 @@ async def main():
     team_player_df = df[["Player", "Team", "Tournament", "Stage", "Match Type", "Match Name"]].drop_duplicates()
     team_player_df["Match Type"] = team_player_df["Match Type"].str.strip()
 
-    s3_client = boto3.client(
-        's3'
-    )
+    # s3_client = boto3.client(
+    #     's3'
+    # )
 
     url = f"https://www.vlr.gg/vct-{year}"
     page = requests.get(url)
@@ -57,14 +81,36 @@ async def main():
     filtered_urls = {}
     stages_ids = {}
     match_types_ids = {}
+    # urls = {'Valorant Champions 2026': 'https://www.vlr.gg/event/stats/2766/valorant-champions-2026'}
 
+
+
+    pick_rates_df = pd.read_csv(f"vct_{year}/agents/agents_pick_rates.csv")
+
+    pick_rates_df["Pick Rate Numeric"] = pd.to_numeric(
+        pick_rates_df["Pick Rate"]
+        .astype(str)
+        .str.replace("%", "", regex=False),
+        errors="coerce"
+    )
+
+    for column in ["Tournament", "Stage", "Match Type", "Map", "Agent"]:
+        pick_rates_df[column] = pick_rates_df[column].astype(str).str.strip()
+
+    pick_rates_df["Agent"] = (
+        pick_rates_df["Agent"]
+        .str.lower()
+        .str.replace(r"[/\s-]", "", regex=True)
+    )
+
+    
     async with aiohttp.ClientSession() as session:
         tasks = [generate_urls_combination(tournament_name, stages_ids, match_types_ids, url, filtered_urls, url_semaphore, session) for tournament_name, url in urls.items()]
         await asyncio.gather(*tasks)
 
 
     async with aiohttp.ClientSession() as session:
-        tasks = [scraping_players_stats(tournament_name, stages, team_player_df, player_stats_semaphore, session) for tournament_name, stages in filtered_urls.items()]
+        tasks = [scraping_players_stats(tournament_name, stages, team_player_df, pick_rates_df, player_stats_semaphore, session) for tournament_name, stages in filtered_urls.items()]
         results = await asyncio.gather(*tasks)
     
     all_result = []
@@ -77,20 +123,113 @@ async def main():
                         for match_type, teams in match_types.items():
                             for team_name, players in teams.items():
                                 for player_name, agents in players.items():
-                                    for agents_played, stats in agents.items():
-                                        all_result.append([tournament_name, stage_name, match_type, player_name, team_name, agents_played] + list(stats.values()))
-    
-    players_stats_df = pd.DataFrame(all_result,
-                                    columns=["Tournament", "Stage", "Match Type", "Player", "Teams", "Agents", "Rounds Played",
-                                            "Rating", "Average Combat Score", "Kills:Deaths", "Kill, Assist, Trade, Survive %",
-                                            "Average Damage Per Round", "Kills Per Round", "Assists Per Round", "First Kills Per Round",
-                                            "First Deaths Per Round", "Headshot %", "Clutch Success %", "Clutches (won/played)",
-                                            "Maximum Kills in a Single Map", "Kills", "Deaths", "Assists", "First Kills", "First Deaths"])
-    csv_buffer = io.StringIO()
-    players_stats_df.to_csv(csv_buffer, index=False)
-    directory =  f"vct_{year}/players_stats/players_stats.csv"
-    s3_client.put_object(Bucket="raw-data-vct", Key=directory, Body=csv_buffer.getvalue())
-    # players_stats_df.to_csv(f"vct_{year}/players_stats/players_stats.csv", encoding="utf-8", index=False)
+                                    for agent_name, maps in agents.items():
+                                        for map_name, sides in maps.items():
+                                            for side_name, stats in sides.items():
+                                                all_result.append({
+                                                    "Tournament": tournament_name,
+                                                    "Stage": stage_name,
+                                                    "Match Type": match_type,
+                                                    "Player": player_name,
+                                                    "Teams": team_name,
+                                                    "Agent": agent_name,
+                                                    "Map": map_name,
+                                                    "Side": side_name,
+                                                    **stats
+                                                })
+
+    columns = [
+        "Tournament",
+        "Stage",
+        "Match Type",
+        "Player",
+        "Teams",
+        "Agent",
+        "Map",
+        "Side",
+        "Maps Played"
+        "Agent Pick Rate %",
+        *[
+            title
+            for title in stats_titles.values()
+            if title != "Maps Played"
+        ]
+    ]
+
+    players_stats_df = pd.DataFrame(all_result).reindex(columns=columns)
+
+
+    # Calculate agent pick rates for every stage, match type, and map
+    group_cols = [
+        "Tournament",
+        "Stage",
+        "Match Type",
+        "Player",
+        "Teams",
+        "Map"
+    ]
+
+    # Only use Both because Maps Played is the same across sides
+    both_df = players_stats_df[
+        players_stats_df["Side"] == "Both"
+    ].copy()
+
+    both_df["Maps Played"] = pd.to_numeric(
+        both_df["Maps Played"],
+        errors="coerce"
+    )
+
+    # Total maps played for each player within the selected filters
+    totals = both_df[
+        both_df["Agent"] == "All Agents"
+    ][group_cols + ["Maps Played"]].rename(
+        columns={"Maps Played": "Total Maps Played"}
+    )
+
+    if totals.duplicated(group_cols).any():
+        raise ValueError("Duplicate All Agents records found")
+
+    # Individual-agent maps played
+    agent_rows = both_df[
+        both_df["Agent"] != "All Agents"
+    ][group_cols + ["Agent", "Maps Played"]].copy()
+
+    agent_rows = agent_rows.merge(
+        totals,
+        on=group_cols,
+        how="left",
+        validate="many_to_one"
+    )
+
+    # Ensure every individual agent has a matching All Agents record
+    if agent_rows["Total Maps Played"].isna().any():
+        raise ValueError(
+            "Missing All Agents records for some agent statistics"
+        )
+
+    agent_rows["Agent Pick Rate %"] = (
+        agent_rows["Maps Played"]
+        .div(agent_rows["Total Maps Played"].replace(0, float("nan")))
+        .mul(100)
+        .round(2)
+    )
+
+    # Apply the calculated rates to Both, Attack, and Defense
+    players_stats_df = players_stats_df.drop(
+        columns=["Agent Pick Rate %"]
+    ).merge(
+        agent_rows[
+            group_cols + ["Agent", "Agent Pick Rate %"]
+        ],
+        on=group_cols + ["Agent"],
+        how="left",
+        validate="many_to_one"
+    )
+
+    players_stats_df = players_stats_df.reindex(columns=columns)
+
+
+    players_stats_df.to_csv(f"vct_{year}/players_stats/players_stats.csv", encoding="utf-8", index=False)
 
     end_time = time.time()
     elasped_time = end_time - start_time

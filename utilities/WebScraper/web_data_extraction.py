@@ -17,10 +17,29 @@ specific_kills_name = ["All Kills", "First Kills", "Op Kills"]
 eco_types = {"": "Eco: 0-5k", "$": "Semi-eco: 5-10k", "$$": "Semi-buy: 10-20k", "$$$": "Full buy: 20k+"}
 # all_agents = ["astra", "breach", "brimstone", "chamber", "cypher", "deadlock", "fade", "gekko", "harbor", "iso", "jett", "kayo",
 #               "killjoy", "neon", "omen", "phoenix", "raze", "reyna", "sage", "skye", "sova", "viper", "yoru", "all"]
-stats_titles = ["", "", "Rounds Played", "Rating", "Average Combat Score", "Kills:Deaths", "Kill, Assist, Trade, Survive %",
-                "Average Damage per Round", "Kills Per Round", "Assists Per Round", "First Kills Per Round", "First Deaths Per Round", 
-                "Headshot %", "Clutch Success %", "Clutches (won/played)", "Maximum Kills in a Single Map", "Kills", "Deaths", "Assists",
-                "First Kills", "First Deaths"]
+stats_titles = {
+    "maps": "Maps Played",
+    "rnd": "Rounds Played",
+    "rating": "Rating",
+    "acs": "Average Combat Score",
+    "kd": "Kills:Deaths",
+    "kast": "Kill, Assist, Trade, Survive %",
+    "adr": "Average Damage Per Round",
+    "kpr": "Kills Per Round",
+    "apr": "Assists Per Round",
+    "fkfd": "First Kills: First Deaths",
+    "fkpr": "First Kills Per Round",
+    "fdpr": "First Deaths Per Round",
+    "hsp": "Headshot %",
+    "clp": "Clutch Success %",
+    "cl": "Clutches (won/played)",
+    "kmax": "Maximum Kills in a Single Map",
+    "k": "Kills",
+    "d": "Deaths",
+    "a": "Assists",
+    "fk": "First Kills",
+    "fd": "First Deaths"
+}
 methods = {"elim": "Elimination", "boom": "Detonated", "defuse": "Defused", "time": "Time Expiry (No Plant)"}
 
 cjk_pattern = re.compile(r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]')
@@ -36,7 +55,7 @@ def extract_games_id(games_id_divs, games_id, results, list):
     stage_id = list[5]
     match_id = list[6]
     for div in games_id_divs:
-        if div.get("data-game-id") and div.get("data-disabled") == "0":
+        if div.get("data-game-id"):
             id = div.get("data-game-id")
             map = re.sub(r"\d+|\t|\n", "", div.text.strip())
             if  map != "N/A":
@@ -90,8 +109,6 @@ def extract_maps_headers(maps_headers, results, list):
         map = map_info[0]
         if map == "TBD":
             map = pd.NA
-        # print(map_info)
-        # print(tournament_name, stage_name, match_type_name, match_name)
 
         lt_attacker_score, lt_defender_score = lt_rounds_scores[0].text.strip(), lt_rounds_scores[1].text.strip()
         rt_attacker_score, rt_defender_score = rt_rounds_scores[1].text.strip(), rt_rounds_scores[0].text.strip()
@@ -134,11 +151,11 @@ def extract_methods(overview_stats, games_id, results, list):
             continue
         if pd.notna(map) and map == "All Maps":
             continue
-        rounds = info.find_all("div", class_="vlr-rounds-row")
+        rounds = info.select("div.vlr-rounds-row")
         outcomes = {team_a: {"elim": 0, "boom": 0, "defuse": 0, "time": 0, "eliminated": 0, "failed_to_defuse": 0, "failed_to_detonate": 0, "failed_to_plant": 0},
                     team_b: {"elim": 0, "boom": 0, "defuse": 0, "time": 0, "eliminated": 0, "failed_to_defuse": 0, "failed_to_detonate": 0, "failed_to_plant": 0}}
         for round in rounds:
-            rows = round.find_all("div", class_="vlr-rounds-row-col")
+            rows = round.select("div.vlr-rounds-row-col")
             for row in rows:
                 if not row.find_all("div", class_="team") and row.find("img"):
                     round_number, team_a_outcome, team_b_outcome = row.find_all("div")
@@ -213,97 +230,121 @@ def extract_overview_stats(overview_stats, games_id, team_mapping, results, list
     player_to_team = {}
     for index, stats in enumerate(overview_stats):
         id = stats.get("data-game-id")
+
         try:
             map = games_id[id]
         except KeyError: #match is BO1
             continue
         map_dict = overview_dict.setdefault(map, {})
-        stats_tables = stats.find_all("table")
+        stats_tables = stats.select("div.ovw-table")
+
+        stat_mapping = {
+            "rating2": "Rating",
+            "acs": "Average Combat Score",
+            "kills": "Kills",
+            "deaths": "Deaths",
+            "assists": "Assists",
+            "kd-diff": "Kills - Deaths (KD)",
+            "kast": "Kill, Assist, Trade, Survive %",
+            "adr": "Average Damage per Round",
+            "hsp": "Headshot %",
+            "fb": "First Kills",
+            "fd": "First Deaths",
+            "fk-diff": "Kills - Deaths (FKD)"
+        }
+
         for table in stats_tables:
-            trs = table.find("tbody").find_all("tr")
+            trs = table.select("div.ovw-row:not(.mod-head)")
+
             for tr in trs:
-                tds = tr.find_all("td")
-                for index, td in enumerate(tds):
-                    td_class = td.get("class") or ""
-                    class_name = " ".join(td_class)
-                    if class_name == "mod-player":
-                        a_tag = td.find("a")
-                        if a_tag:
-                            player_id = (a_tag.get("href")).split("/")[2]
+                player_info = tr.select_one(".ovw-cell.mod-player")
+                a_tag = player_info.find("a")
+
+                if a_tag:
+                    player_id = a_tag.get("href").split("/")[2]
+                else:
+                    player_id = pd.NA
+
+                player = player_info.select_one(
+                    ".ovw-player-name"
+                ).get_text(strip=True)
+
+                team = player_info.select_one(
+                    ".ovw-player-tag"
+                ).get_text(strip=True)
+
+                try:
+                    team = team_mapping[team]
+                except KeyError:
+                    if not team:
+                        if cjk_pattern.search(team_a):
+                            team = team_a
+                        elif cjk_pattern.search(team_b):
+                            team = team_b
                         else:
-                            player_id = pd.NA
-                        try:
-                            result = td.find("a").find_all("div")
-                            player = result[0].text.strip()
-                            team = result[1].text.strip()
-                        except AttributeError: #This row did not contain a clickable link to the player
-                            player_info = td.find("div").find("div").find_all("div")
-                            player = player_info[0].text.strip()
-                            team = player_info[1].text.strip()
-                        try:
-                            team = team_mapping[team]
-                        except KeyError: #Either the team name does not contain latin characters or they did not used the abbrievated name
-                            if not team:
-                                if cjk_pattern.search(team_a):
-                                    team = team_a
-                                elif cjk_pattern.search(team_b):
-                                    team = team_b
-                                else:
-                                    team = min(team_mapping.values(), key=lambda x: Levenshtein.distance(team, x))
-                        results["players_ids"][player] = player_id
-                        # print(tournament_name, stage_name, match_type_name, match_type_name, match_name)
-                        # print(player, id)
-                        # print(results["players_ids"])
-                        player_to_team[player] = team
-                        team_dict = map_dict.setdefault(team, {})
-                        player_dict = team_dict.setdefault(player, {})
-                    elif class_name == "mod-agents":
-                        imgs = td.find_all("img")
-                        agents_played = []
-                        for img in imgs:
-                            agent = img.get("alt")
-                            agents_played.append(agent)
-                        agents = ", ".join(agents_played)
-                        if "agents" in player_dict:
-                            agents = f"{player_dict['agents']}, {agents}"
-                        player_dict["agents"] = agents
-                    elif class_name in ["mod-stat mod-vlr-kills", "mod-stat", "mod-stat mod-vlr-assists", "mod-stat mod-kd-diff",
-                                        "mod-stat mod-fb", "mod-stat mod-fd", "mod-stat mod-fk-diff"]:
-                        stats = td.find("span").find_all("span")
-                        if len(stats) == 3:
-                            all_stat, attack_stat, defend_stat = stats
-                            all_stat, attack_stat, defend_stat = all_stat.text.strip(), attack_stat.text.strip(), defend_stat.text.strip()
-                            stat_name = overview_stats_titles[index % len(overview_stats_titles)]
-                            if not all_stat and not attack_stat and not defend_stat:
-                                all_stat, attack_stat, defend_stat = pd.NA, pd.NA, pd.NA
-                            if stat_name in player_dict:
-                                all_stat, attack_stat, defend_stat = compute_stats(all_stat, attack_stat, defend_stat, stat_name, player_dict)
-                            player_dict[stat_name] = {"both": all_stat, "attack": attack_stat, "defend": defend_stat}
-                        else:
-                            all_stat = stats[0]
-                            all_stat = all_stat.text.strip()
-                            attack_stat, defend_stat = pd.NA, pd.NA
-                            stat_name = overview_stats_titles[index % len(overview_stats_titles)]
-                            if stat_name in player_dict:
-                                all_stat, attack_stat, defend_stat = compute_stats(all_stat, attack_stat, defend_stat, stat_name, player_dict)
-                            player_dict[stat_name] = {"both": all_stat, "attack": attack_stat, "defend": defend_stat}
-                    elif class_name == "mod-stat mod-vlr-deaths":
-                        stats = td.find("span").find_all("span")[1].find_all("span")
-                        if len(stats) == 3:
-                            all_stat, attack_stat, defend_stat = td.find("span").find_all("span")[1].find_all("span")
-                            all_stat, attack_stat, defend_stat = all_stat.text.strip(), attack_stat.text.strip(), defend_stat.text.strip()
-                            stat_name = overview_stats_titles[index % len(overview_stats_titles)]
-                            if stat_name in player_dict:
-                                all_stat, attack_stat, defend_stat = compute_stats(all_stat, attack_stat, defend_stat, stat_name, player_dict)
-                            player_dict[stat_name] = {"both": all_stat, "attack": attack_stat, "defend": defend_stat}
-                        else:
-                            all_stat = stats[0]
-                            all_stat = all_stat.text.strip()
-                            attack_stat, defend_stat = pd.NA, pd.NA
-                            stat_name = overview_stats_titles[index % len(overview_stats_titles)]
-                            if stat_name in player_dict:
-                                all_stat, attack_stat, defend_stat = compute_stats(all_stat, attack_stat, defend_stat, stat_name, player_dict)
-                            player_dict[stat_name] = {"both": all_stat, "attack": attack_stat, "defend": defend_stat}
+                            team = min(
+                                team_mapping.values(),
+                                key=lambda x: Levenshtein.distance(team, x)
+                            )
+
+                results["players_ids"][player] = player_id
+                player_to_team[player] = team
+
+                team_dict = map_dict.setdefault(team, {})
+                player_dict = team_dict.setdefault(player, {})
+
+                # Extract agents
+                imgs = tr.select(".ovw-cell.mod-agents img")
+                agents = ", ".join(img.get("alt") for img in imgs)
+
+                if "agents" in player_dict:
+                    agents = f"{player_dict['agents']}, {agents}"
+
+                player_dict["agents"] = agents
+
+                # Extract statistics
+                stat_cells = tr.select(
+                    ".ovw-cell[data-col], .ovw-kda-stat[data-col]"
+                )
+
+                for cell in stat_cells:
+                    stat_col = cell.get("data-col")
+                    stat_name = stat_mapping.get(stat_col)
+
+                    if not stat_name:
+                        continue
+
+                    values = {}
+                    for side, css_class in [
+                        ("both", "mod-both"),
+                        ("attack", "mod-t"),
+                        ("defend", "mod-ct")
+                    ]:
+                        span = cell.select_one(f".side.{css_class}")
+                        values[side] = (
+                            span.get_text(strip=True)
+                            if span and span.get_text(strip=True)
+                            else pd.NA
+                        )
+
+                    all_stat = values["both"]
+                    attack_stat = values["attack"]
+                    defend_stat = values["defend"]
+
+                    if stat_name in player_dict:
+                        all_stat, attack_stat, defend_stat = compute_stats(
+                            all_stat,
+                            attack_stat,
+                            defend_stat,
+                            stat_name,
+                            player_dict
+                        )
+
+                    player_dict[stat_name] = {
+                        "both": all_stat,
+                        "attack": attack_stat,
+                        "defend": defend_stat
+                    }
     sides = ["both", "attack", "defend"]
     for map_name, team in overview_dict.items():
         for team_name, player in team.items():
@@ -330,143 +371,346 @@ def extract_overview_stats(overview_stats, games_id, team_mapping, results, list
     return player_to_team
 
 def extract_kills_stats(performance_stats_div, games_id, team_mapping, player_to_team, results, list):
-        tournament_name = list[0]
-        stage_name = list[1]
-        match_type_name = list[2]
-        match_name = list[3]
-        team_a = list[4]
-        team_b = list[5]
-        try:
-            team_b_div = performance_stats_div[0].find("div").find("tr").find_all("div", class_="team")
-            team_b_players = [""]
-            for player in team_b_div:
-                try:
-                    player, team = player.text.strip().replace("\t", "").split("\n")
-                except ValueError: #The player name was not on the row but I set it to NULL so I can have a "5x5 table" when I extract the kill data
-                    player = pd.NA
-                team_b_players.append(player)
-            players_to_players_kills = {}
-            players_kills = {}
 
-            for div in performance_stats_div:
-                kills_table = div.find("table", "wf-table-inset mod-adv-stats")
-                if kills_table != None:
-                    id = div.get("data-game-id")
-                    players_to_players_kills[id] = []
-                    players_kills[id] = []
-                    players_to_players_kills_tables = div.find("div").find_all("table")
-                    kills_trs = kills_table.find_all("tr")[1:]
-                    for table in players_to_players_kills_tables:
-                        trs = table.find_all("tr")[1:]
-                        for tr in trs:
-                            tds = tr.find_all("td")
-                            players_to_players_kills[id].append(tds)
-                    for tr in kills_trs:
-                        tds = tr.find_all("td")
-                        players_kills[id].append(tds)
+    tournament_name, stage_name, match_type_name, match_name, team_a, team_b = list[:6]
+
+    try:
+        def get_player(team_div):
+            if team_div is None:
+                return pd.NA, pd.NA
+
+            tag = team_div.select_one(".team-tag")
+            abbr = tag.get_text(strip=True) if tag else ""
+
+            # Get player name without the nested team tag
+            player_div = team_div.find("div")
+            player = (
+                "".join(player_div.find_all(string=True, recursive=False)).strip()
+                if player_div else ""
+            )
+
+            team = team_mapping.get(abbr, abbr)
+            if not team or team == abbr and abbr not in team_mapping:
+                if not abbr:
+                    if cjk_pattern.search(team_a):
+                        team = team_a
+                    elif cjk_pattern.search(team_b):
+                        team = team_b
+                    else:
+                        team = team_a
                 else:
-                    continue
-            
-            for id, tds_lists in players_to_players_kills.items():
-                try:
-                    map = games_id[id]
-                except KeyError: #match is BO1
-                    continue
-                for index, td_list in enumerate(tds_lists):
-                    for team_b_player_index, td in enumerate(td_list):
-                        if td.find("img") != None:
-                            result = td.text.strip().replace("\t", "").split("\n")
-                            team = result.pop()
-                            try:
-                                team = team_mapping[team]
-                            except KeyError: #The team name can't be map because it is empty or they did not use the abbrievated name
-                                team = team_a
-                            try:
-                                player = result.pop()
-                            except IndexError: #The player name is missing
-                                player = pd.NA
-                            kill_name = specific_kills_name[index // (len(team_b_players) - 1)]
-                        else:
-                            kills_div = td.find("div").find_all("div")
-                            player_a_kills, player_b_kills, difference = kills_div[0].text.strip(), kills_div[1].text.strip(), kills_div[2].text.strip()
-                            player_b = team_b_players[team_b_player_index]
-                            if not player_a_kills and not player_b_kills and not difference:
-                                player_a_kills, player_b_kills, difference = pd.NA, pd.NA, pd.NA
-                            results["kills"].append([tournament_name, stage_name, match_type_name, match_name, map, team, player,
-                                                        team_b, player_b, player_a_kills, player_b_kills, difference,
-                                                        kill_name])
-            
+                    closest = min(
+                        team_mapping.keys(),
+                        key=lambda x: Levenshtein.distance(abbr, x)
+                    )
+                    team = team_mapping[closest]
 
-            for id, tds_lists in players_kills.items():
-                try:
-                    map = games_id[id]
-                except KeyError: #The map name is "N/A" or it is BO1
-                    continue
-                for tds in tds_lists:
-                    values = [tournament_name, stage_name, match_type_name, match_name, map]
-                    for index, td in enumerate(tds):
-                        img = td.find("img")
-                        if img != None:
-                            class_name = " ".join(td.find("div").get("class"))
-                            if class_name == "team":
-                                result = td.text.strip().replace("\t", "").split("\n")
-                                team = result.pop()
-                                try:
-                                    team = team_mapping[team]
-                                except KeyError: #The team name was missing or they did not use the abbrievated name
-                                    if not team:
-                                        if cjk_pattern.search(team_a):
-                                            team = team_a
-                                        elif cjk_pattern.search(team_b):
-                                            team = team_b
-                                    else:
-                                        team = min(team_mapping.keys(), key=lambda x: Levenshtein.distance(team, x))
-                                try:
-                                    player = result.pop()
-                                except IndexError: #The player was missing in this row.
-                                    player = pd.NA
-                                values.append(team)
-                                values.append(player)
-                            elif class_name == "stats-sq":
-                                src = img.get("src")
-                                agent = re.search(r'/(\w+)\.png', src).group(1)
-                                values.append(agent)
-                            else:
-                                stat = td.text.split()[0]
-                                stat_name = performance_stats_title[index % len(performance_stats_title)]
-                                rounds_divs = td.find("div").find("div").find("div").find_all("div")
-                                values.append(stat)
-                                for round_div in rounds_divs:
-                                    kills_div = round_div.find_all("div")
-                                    for div in kills_div:
-                                        img = div.find("img")
-                                        if img == None:
-                                            round_stat = div.text.strip()
-                                        else:
-                                            src = img.get("src")
-                                            eliminated_agent = re.search(r'/(\w+)\.png', src).group(1)
-                                            eliminated = div.text.strip()
-                                            if not eliminated:
-                                                eliminated = pd.NA
-                                                eliminated_team = pd.NA
-                                            else:
-                                                eliminated_team = player_to_team[eliminated]
-                                            results["rounds_kills"].append([tournament_name, stage_name, match_type_name, match_name, map, round_stat,
-                                                                            team, player, agent, eliminated_team, eliminated, eliminated_agent, stat_name])
-                        else:
-                            stat = td.text.strip()
-                            stat_name = performance_stats_title[index % len(performance_stats_title)]
-                            if not stat:
-                                stat = pd.NA
-                            values.append(stat)
-                    results["kills_stats"].append(values)
+            return player or pd.NA, team
 
-        except AttributeError as e:
-            print(f"{tournament_name}, {stage_name}, {match_type_name}, {match_name}, does not contain any data under their performance page.")
-        except Exception as e:
-            print(f"ERROR COMING FROM SCRAPING THE PERFORMANCE PAGE")
-            print(f"{tournament_name}, {stage_name}, {match_type_name}, {match_name}")
-            traceback.print_exc()
+        for div in performance_stats_div:
+            id = div.get("data-game-id")
+
+            if id not in games_id:
+                continue
+
+            map_name = games_id[id]
+
+            # Extract kill matrices
+            matrix_classes = ["mod-normal", "mod-fkfd", "mod-op"]
+
+            for matrix_index, matrix_class in enumerate(matrix_classes):
+                table = div.select_one(f"table.mod-matrix.{matrix_class}")
+
+                if table is None:
+                    continue
+
+                rows = table.select("tr")
+                if not rows:
+                    continue
+
+                headers = rows[0].find_all("td", recursive=False)
+                team_b_players = [
+                    get_player(td.select_one(".team"))[0]
+                    for td in headers[1:]
+                ]
+
+                kill_name = specific_kills_name[matrix_index]
+
+                for tr in rows[1:]:
+                    tds = tr.find_all("td", recursive=False)
+                    if not tds:
+                        continue
+
+                    player, team = get_player(
+                        tds[0].select_one(".team")
+                    )
+
+                    for player_b, td in zip(team_b_players, tds[1:]):
+                        kills_div = td.select("div.stats-sq")
+
+                        if len(kills_div) < 3:
+                            continue
+
+                        player_a_kills, player_b_kills, difference = [
+                            item.get_text(strip=True)
+                            for item in kills_div[:3]
+                        ]
+
+                        if not any([player_a_kills, player_b_kills, difference]):
+                            player_a_kills = pd.NA
+                            player_b_kills = pd.NA
+                            difference = pd.NA
+
+                        results["kills"].append([
+                            tournament_name, stage_name, match_type_name,
+                            match_name, map_name, team, player,
+                            team_b, player_b, player_a_kills,
+                            player_b_kills, difference, kill_name
+                        ])
+
+            # Extract advanced performance stats
+            kills_table = div.select_one("table.mod-adv-stats")
+
+            if kills_table is None:
+                continue
+
+            for tr in kills_table.select("tr")[1:]:
+                tds = tr.find_all("td", recursive=False)
+
+                if not tds:
+                    continue
+
+                player, team = get_player(tds[0].select_one(".team"))
+
+                agent_img = tds[1].select_one("img") if len(tds) > 1 else None
+                agent = (
+                    re.search(r'/(\w+)\.png', agent_img.get("src")).group(1)
+                    if agent_img else pd.NA
+                )
+
+                values = [
+                    tournament_name, stage_name, match_type_name,
+                    match_name, map_name, team, player, agent
+                ]
+
+                for index, td in enumerate(tds[2:], start=2):
+                    stat_name = performance_stats_title[
+                        index % len(performance_stats_title)
+                    ]
+
+                    stat_div = td.select_one(".stats-sq")
+
+                    if stat_div is None:
+                        values.append(pd.NA)
+                        continue
+
+                    # Read only the direct text, excluding popup details
+                    stat = "".join(
+                        stat_div.find_all(string=True, recursive=False)
+                    ).strip()
+
+                    values.append(stat if stat else pd.NA)
+
+                    # Extract round-by-round kills from popup
+                    scope = stat_div.select_one(".vm-perf-notable-scope")
+
+                    if scope is None:
+                        continue
+
+                    round_groups = scope.select(
+                        'div[style*="margin-top: 10px"]'
+                    )
+
+                    for group in round_groups:
+                        round_span = group.select_one(
+                            'div[style*="white-space: nowrap"] span'
+                        )
+
+                        if round_span is None:
+                            continue
+
+                        round_stat = round_span.get_text(strip=True)
+
+                        eliminated_divs = group.select(
+                            'div[style*="align-items: center"]'
+                        )
+
+                        for eliminated_div in eliminated_divs:
+                            img = eliminated_div.find("img")
+
+                            if img is None:
+                                continue
+
+                            src = img.get("src", "")
+                            match = re.search(r'/(\w+)\.png', src)
+                            eliminated_agent = match.group(1) if match else pd.NA
+
+                            eliminated = eliminated_div.get_text(strip=True)
+                            eliminated = eliminated if eliminated else pd.NA
+
+                            eliminated_team = (
+                                player_to_team.get(eliminated, pd.NA)
+                                if pd.notna(eliminated) else pd.NA
+                            )
+
+                            results["rounds_kills"].append([
+                                tournament_name, stage_name, match_type_name,
+                                match_name, map_name, round_stat,
+                                team, player, agent, eliminated_team,
+                                eliminated, eliminated_agent, stat_name
+                            ])
+
+                results["kills_stats"].append(values)
+
+    except AttributeError:
+        print(
+            f"{tournament_name}, {stage_name}, {match_type_name}, "
+            f"{match_name} does not contain performance data."
+        )
+    except Exception:
+        print("ERROR COMING FROM SCRAPING THE PERFORMANCE PAGE")
+        print(tournament_name, stage_name, match_type_name, match_name)
+        traceback.print_exc()
+
+
+def extract_player_loadouts(loadout_soup, games_id, team_mapping, results, list):
+
+    tournament_name = list[0]
+    stage_name = list[1]
+    match_type_name = list[2]
+    match_name = list[3]
+
+    games = loadout_soup.select(".vm-stats-game[data-game-id]")
+
+    for game in games:
+
+        game_id = game.get("data-game-id")
+
+        # Skip the aggregate "All" page
+        if game_id == "all":
+            continue
+
+        # Skip games without replay data
+        if game.select_one(".lg-empty"):
+            continue
+
+        # Convert game ID to map name
+        map_name = games_id.get(str(game_id))
+
+        if map_name is None:
+            print(f"Map not found for game ID: {game_id}")
+            continue
+
+        rounds = game.select(".lg-rounds > .lg-round[data-round]")
+
+        if not rounds:
+            continue
+
+        for round_element in rounds:
+
+            round_number = int(round_element["data-round"])
+
+            teams = round_element.select(".lg-mir > .lg-mir-team")
+
+            for team in teams:
+
+                classes = team.get("class", [])
+
+                if "mod-atk" in classes:
+                    side = "Attack"
+                elif "mod-def" in classes:
+                    side = "Defense"
+                else:
+                    side = None
+
+                for player_row in team.select(".lg-mir-row"):
+
+                    player_element = player_row.select_one(".lg-mir-name")
+                    team_element = player_row.select_one(".lg-mir-tag")
+                    agent_element = player_row.select_one("img.lg-agent")
+
+                    credits_spent_element = player_row.select_one(".lg-kit-spent")
+                    credits_left_element = player_row.select_one(".lg-mir-left")
+
+                    armor_element = player_row.select_one(
+                        ".lg-kit-armor [title]"
+                    )
+
+                    gun_element = player_row.select_one(
+                        ".lg-mir-gun img.lg-kit-gun"
+                    )
+
+                    player = (
+                        player_element.get_text(strip=True)
+                        if player_element else None
+                    )
+
+                    team_abbreviation = (
+                        team_element.get_text(strip=True)
+                        if team_element else None
+                    )
+
+                    # Convert abbreviation to full team name
+                    team_name = (
+                        team_mapping.get(
+                            team_abbreviation,
+                            team_abbreviation
+                        )
+                    )
+
+                    agent = None
+
+                    if agent_element:
+                        agent = (
+                            agent_element.get("src", "")
+                            .rsplit("/", 1)[-1]
+                            .removesuffix(".png")
+                            .replace("_", "")
+                            .replace("-", "")
+                            .lower()
+                        )
+
+                    def parse_credits(element):
+                        if element is None:
+                            return None
+
+                        value = re.sub(
+                            r"[^\d]",
+                            "",
+                            element.get_text(strip=True)
+                        )
+
+                        return int(value) if value else None
+
+                    credits_spent = parse_credits(credits_spent_element)
+                    credits_remaining = parse_credits(credits_left_element)
+
+                    armor = (
+                        armor_element.get("title")
+                        if armor_element else None
+                    )
+
+                    gun = (
+                        gun_element.get("title")
+                        if gun_element else None
+                    )
+
+                    results["player_loadouts"].append({
+                        "Tournament": tournament_name,
+                        "Stage": stage_name,
+                        "Match Type": match_type_name,
+                        "Match": match_name,
+                        "Map": map_name,
+                        "Round": round_number,
+                        "Team": team_name,
+                        "Player": player,
+                        "Side": side,
+                        "Agent": agent,
+                        "Credits Spent": credits_spent,
+                        "Credits Remaining": credits_remaining,
+                        "Armor": armor,
+                        "Weapon": gun
+                    })
 
 def extract_economy_stats_div(economy_stats_div):
     eco_stats = {}
@@ -495,83 +739,225 @@ def extract_economy_stats_div(economy_stats_div):
                 eco_stats[id].extend(tds)
     return eco_stats, eco_rounds_stats
 
-def extract_economy_stats(eco_stats, eco_rounds_stats, games_id, team_mapping, results, list):
+
+def extract_economy_stats(economy_stats_div, games_id, team_mapping, results, list):
     tournament_name = list[0]
     stage_name = list[1]
     match_type_name = list[2]
     match_name = list[3]
     team_a = list[4]
     team_b = list[5]
-    if eco_stats:     
-        
-        for id, td_list in eco_stats.items():
-            try:
-                map = games_id[id]
-            except KeyError: #match is BO1
-                continue
-            for index, td in enumerate(td_list):
-                class_name = td.find("div").get("class")[0]
-                if class_name == "team":
-                    team = td.text.strip()
-                    try:
-                        team = team_mapping[team]
-                    except KeyError: #They uppercased the team name
-                        if team.lower() == team_a.lower():
-                            team = team_a
-                        elif team.lower() == team_b.lower():
-                            team = team_b
-                else:
-                    stats = td.text.strip().replace("(", "").replace(")", "").split()
-                    if len(stats) > 1:
-                        initiated, won = stats[0], stats[1]
-                    else:
-                        initiated, won = pd.NA, stats[0]
-                    stat_name = economy_stats_title[index % len(economy_stats_title)]
-                    results["eco_stats"].append([tournament_name, stage_name, match_type_name, match_name,
-                                                    map, team, stat_name, initiated, won])
-        for id, td_list in eco_rounds_stats.items():
-            try:
-                map = games_id[id]
-            except KeyError: #match is BO1
-                continue
-            for index, td in enumerate(td_list):
-                teams = td.find_all("div", class_="team")
-                if teams:
-                    try:
-                        team_1 = team_mapping[teams[0]]
-                    except KeyError: #They did not use the abbrievated team name
-                        team_1 = team_a
-                    try:
-                        team_2 = team_mapping[teams[1]]
-                    except KeyError: #They did not use the abbrievated team name
-                        team_2 = team_b
 
-                else:
-                    stats = td.find_all("div")
-                    commented_divs = td.find_all(string=lambda text: isinstance(text, Comment) and '<div>' in text and '</div>' in text)
-                    divs_contents = [div.extract() for comment in commented_divs for div in BeautifulSoup(comment, 'html.parser').find_all('div')]
-                    loadout_values = [value.text.strip() for value in divs_contents]
-                    round = stats[0].text.strip()
-                    team_a_loadout_value = loadout_values[0]
-                    team_a_remaining_credits = stats[1].text.strip()
-                    team_b_loadout_value = loadout_values[1]
-                    team_b_remaining_credits = stats[4].text.strip()
-                    team_a_eco_type = eco_types[stats[2].text.strip()]
-                    team_b_eco_type = eco_types[stats[3].text.strip()]
-                    if "mod-win" in stats[2]["class"]:
-                        team_a_outcome = "Win"
-                        team_b_outcome = "Loss"
+    def resolve_team(abbr):
+        if abbr in team_mapping:
+            return team_mapping[abbr]
+        if abbr.lower() == team_a.lower():
+            return team_a
+        if abbr.lower() == team_b.lower():
+            return team_b
+        return abbr
+
+    def get_credits(element):
+        if element is None:
+            return pd.NA
+
+        title = element.get("title", "")
+        match = re.search(r"(\d+(?:\.\d+)?)k", title)
+
+        return float(match.group(1)) * 1000 if match else pd.NA
+
+    def get_eco_type(element):
+        if element is None:
+            return pd.NA
+
+        classes = element.get("class", [])
+
+        if "mod-bp" in classes:
+            return "Pistol"
+        elif "mod-b1" in classes:
+            return "Eco"
+        elif "mod-b2" in classes:
+            return "Half Buy"
+        elif "mod-b3" in classes:
+            return "Full Buy"
+
+        return pd.NA
+
+    for div in economy_stats_div:
+        id = div.get("data-game-id")
+
+        # Handle All Maps and individual maps
+        if id == "all":
+            map_name = "All Maps"
+        else:
+            try:
+                map_name = games_id[id]
+            except KeyError:
+                continue
+
+        # ---------------------------------------
+        # Extract team names
+        # ---------------------------------------
+        if id == "all":
+            team_1 = team_a
+            team_2 = team_b
+        else:
+            team_tags = div.select(
+                ".vlr-rounds-row-col.mod-teams .vlr-rounds-tag"
+            )
+
+            if len(team_tags) < 2:
+                continue
+
+            team_1 = resolve_team(team_tags[0].get_text(strip=True))
+            team_2 = resolve_team(team_tags[1].get_text(strip=True))
+
+        # ---------------------------------------
+        # Extract summary economy statistics
+        # ---------------------------------------
+        tables = div.select("table.ecm")
+
+        for table_index, table in enumerate(tables):
+            rows = table.select("tr")
+
+            if len(rows) < 3:
+                continue
+
+            if table_index == 0:
+                stat_names = ["Pistol", "Converted", "Bonus"]
+            elif table_index <= 3:
+                own_type = ["Eco", "Half Buy", "Full Buy"][table_index - 1]
+
+                stat_names = [
+                    f"On {own_type} vs Eco",
+                    f"On {own_type} vs Half Buy",
+                    f"On {own_type} vs Full Buy"
+                ]
+            else:
+                continue
+
+            for row_index, row in enumerate(rows[1:3]):
+                team = team_1 if row_index == 0 else team_2
+
+                cells = row.find_all("td", recursive=False)
+
+                for stat_name, td in zip(stat_names, cells):
+                    score = td.select_one(".ecm-score")
+
+                    if score is None:
+                        initiated = pd.NA
+                        won = pd.NA
                     else:
-                        team_a_outcome = "Loss"
-                        team_b_outcome = "Win"
-                    results["eco_rounds"].append([tournament_name, stage_name, match_type_name, match_name, map,
-                                                round, team_1, team_a_loadout_value, team_a_remaining_credits, team_a_eco_type, team_a_outcome])
-                    results["eco_rounds"].append([tournament_name, stage_name, match_type_name, match_name, map,
-                                                round, team_2, team_b_loadout_value, team_b_remaining_credits, team_b_eco_type, team_b_outcome])
-                
-                
-    else:
-        print(tournament_name, stage_name, match_type_name, match_name, "does not contain any data under their economy page")
+                        fraction = score.get_text(strip=True).split("/")
+
+                        if len(fraction) == 2:
+                            won = fraction[0]
+                            initiated = fraction[1]
+                        else:
+                            initiated = pd.NA
+                            won = pd.NA
+
+                    results["eco_stats"].append([
+                        tournament_name,
+                        stage_name,
+                        match_type_name,
+                        match_name,
+                        map_name,
+                        team,
+                        stat_name,
+                        initiated,
+                        won
+                    ])
+
+        # All Maps only contains summary statistics
+        if id == "all":
+            continue
+
+        # ---------------------------------------
+        # Extract round-by-round economy stats
+        # ---------------------------------------
+        round_columns = div.select(".vlr-rounds-row-col")
+        round_number = 0
+
+        for column in round_columns:
+            classes = column.get("class", [])
+
+            # Skip team header and halftime separator
+            if "mod-teams" in classes or "mod-spacing" in classes:
+                continue
+
+            team_1_loadout = column.select_one(".ecc-c.mod-t1")
+            team_2_loadout = column.select_one(".ecc-c.mod-t2")
+
+            if team_1_loadout is None or team_2_loadout is None:
+                continue
+
+            team_1_sq = team_1_loadout.select_one(".ecc-sq")
+            team_2_sq = team_2_loadout.select_one(".ecc-sq")
+
+            if team_1_sq is None or team_2_sq is None:
+                continue
+
+            team_1_eco_type = get_eco_type(team_1_sq)
+            team_2_eco_type = get_eco_type(team_2_sq)
+
+            # Skip empty round placeholders
+            if pd.isna(team_1_eco_type) or pd.isna(team_2_eco_type):
+                continue
+
+            round_number += 1
+
+            team_1_bank = column.select_one(".ecr-bank.mod-t1")
+            team_2_bank = column.select_one(".ecr-bank.mod-t2")
+
+            team_1_loadout_value = get_credits(team_1_loadout)
+            team_2_loadout_value = get_credits(team_2_loadout)
+
+            team_1_remaining_credits = get_credits(team_1_bank)
+            team_2_remaining_credits = get_credits(team_2_bank)
+
+            team_1_outcome = (
+                "Win"
+                if "mod-win" in team_1_sq.get("class", [])
+                else "Loss"
+            )
+
+            team_2_outcome = (
+                "Win"
+                if "mod-win" in team_2_sq.get("class", [])
+                else "Loss"
+            )
+
+            results["eco_rounds"].append([
+                tournament_name,
+                stage_name,
+                match_type_name,
+                match_name,
+                map_name,
+                round_number,
+                team_1,
+                team_1_loadout_value,
+                team_1_remaining_credits,
+                team_1_eco_type,
+                team_1_outcome
+            ])
+
+            results["eco_rounds"].append([
+                tournament_name,
+                stage_name,
+                match_type_name,
+                match_name,
+                map_name,
+                round_number,
+                team_2,
+                team_2_loadout_value,
+                team_2_remaining_credits,
+                team_2_eco_type,
+                team_2_outcome
+            ])
+          
+    # else:
+    #     print(tournament_name, stage_name, match_type_name, match_name, "does not contain any data under their economy page")
 
 def extract_agent_pictures(agent_pictures, global_table_titles):
     for th in agent_pictures:
@@ -587,7 +973,7 @@ def extract_pick_rates(table_stats_tr, maps_stats_dict, agents_pick_rates_dict, 
         filtered_tds = [td for td in all_tds if isinstance(td, Tag)]
         for index, td in enumerate(filtered_tds):
             td_class = td.get("class") or ""
-            class_name = " ".join(td_class)
+            class_name = " ".join(td_class).strip()
             if not class_name:
                 map = td.text.strip().replace("\t", "")
                 if not map:
@@ -602,7 +988,7 @@ def extract_pick_rates(table_stats_tr, maps_stats_dict, agents_pick_rates_dict, 
                 stat = td.text.strip()
                 title = global_table_titles[index]
                 map_stats_dict[title] = stat
-            elif class_name == "mod-center":
+            elif class_name == "mod-color-sq mod-center":
                 stat = td.text.strip()
                 agent = global_table_titles[index]
                 agent_pick_rate_dict[agent] = stat
@@ -641,64 +1027,62 @@ def extract_team_picked_agents(teams_tables, teams_pick_rates_dict, table_titles
                         agent_dict[outcome] += 1
                 team_dict["Total Maps Played"] += 1
 
-def extract_players_stats(stats_trs, match_type_dict, global_players_agents, players_agents, df, tournament_name, stage_name, match_type_name, agent):
+def extract_players_stats(
+    stats_trs, match_type_dict, df,
+    tournament_name, stage_name, match_type_name,
+    agent, map_name, side_name
+):
     for tr in stats_trs:
-        all_tds = tr.find_all("td")
-        filtered_tds = [td for td in all_tds if isinstance(td, Tag)]
-        for index, td in enumerate(filtered_tds):
-            td_class = td.get("class") or ""
-            class_name = " ".join(td_class)
-            if class_name == "mod-player mod-a":
-                player_info = td.find("div").find_all("div")
-                player, team = player_info[0].text, player_info[1].text
-                if stage_name == "All Stages" and match_type_name == "All Match Types":
-                    filtered = df[(df["Player"] == player) & (df["Tournament"] == tournament_name)]
-                else:
-                    filtered = df[(df["Player"] == player) & (df["Tournament"] == tournament_name) & (df["Stage"] == stage_name) & (df["Match Type"] == match_type_name)]
-                try:
-                    team = ", ".join(sorted(filtered["Team"].unique())).strip(", ")
-                except:
-                    print("ERROR")
-                    print(player, team, tournament_name, stage_name, match_type_name, agent, " is causing this issue")
-                    sys.exit(1)
-                team_dict = match_type_dict.setdefault(team, {})
-                player_dict = team_dict.setdefault(player, {})
-            elif class_name == "mod-agents":
-                imgs = td.find("div").find_all("img")
-                agents = ""
-                player_agents_set = players_agents.setdefault(player, set())
-                global_players_agents_set = global_players_agents.setdefault(player, set())
-                if stage_name == "All" and match_type_name == "All": 
-                    agents = ", ".join(sorted(global_players_agents_set)).strip(", ")
-                elif agent == "all" and len(player_agents_set) > 1:
-                    agents = ", ".join(sorted(player_agents_set)).strip(", ")
-                elif agent == "all" and len(player_agents_set) == 1:
-                    break
-                else:
-                    for img in imgs:
-                        src = img.get("src")
-                        match = re.search(pattern, src)
-                        agent_name = match.group(1)
-                        player_agents_set.add(agent_name)
-                        agents += f"{agent}, "
-                    agents = agents.strip(", ")
-                agents_dict = player_dict.setdefault(agents, {})
-            elif class_name == "mod-rnd" or class_name == "mod-cl" or class_name == "":
-                stat = td.text.strip()
-                stat_name = stats_titles[index]
-                if stat == "":
-                    stat = pd.NA
-                agents_dict[stat_name] = stat
-            elif class_name == "mod-color-sq mod-acs" or class_name ==  "mod-color-sq":
-                stat = td.find("div").find("span").text.strip()
-                stat_name = stats_titles[index]
-                if stat == "":
-                    stat = pd.NA
-                agents_dict[stat_name] = stat
-            elif class_name == "mod-a mod-kmax":
-                stat = td.find("a").text.strip()
-                stat_name = stats_titles[index]
-                if stat == "":
-                    stat = pd.NA
-                agents_dict[stat_name] = stat
-        global_players_agents[player] = global_players_agents[player] | players_agents[player]
+        player_td = tr.select_one("td.mod-player")
+
+        if player_td is None:
+            continue
+
+        player_element = player_td.select_one(".st-pl-name")
+        team_element = player_td.select_one(".st-pl-country")
+
+        if player_element is None:
+            continue
+
+        player = player_element.get_text(strip=True)
+        team = (
+            team_element.get_text(strip=True)
+            if team_element else None
+        )
+
+        filtered = df[
+            (df["Player"] == player) &
+            (df["Tournament"] == tournament_name)
+        ]
+
+        if stage_name != "All Stages":
+            filtered = filtered[
+                filtered["Stage"] == stage_name
+            ]
+
+        if match_type_name != "All Match Types":
+            filtered = filtered[
+                filtered["Match Type"] == match_type_name
+            ]
+
+        teams = sorted(filtered["Team"].dropna().unique())
+
+        if len(teams) > 0:
+            team = ", ".join(teams)
+
+        team_dict = match_type_dict.setdefault(team, {})
+        player_dict = team_dict.setdefault(player, {})
+        agent_dict = player_dict.setdefault(agent, {})
+        map_dict = agent_dict.setdefault(map_name, {})
+        stats_dict = map_dict.setdefault(side_name, {})
+
+        for td in tr.select("td[data-col]"):
+            column = td.get("data-col")
+
+            if column not in stats_titles:
+                continue
+
+            stat_name = stats_titles[column]
+            stat = td.get_text(" ", strip=True)
+
+            stats_dict[stat_name] = stat if stat else pd.NA
