@@ -4,7 +4,8 @@ import traceback
 import Levenshtein
 from bs4 import Tag, Comment, BeautifulSoup
 import sys
-from compute_stats.compute_stats import compute_stats
+import json
+from utilities.compute_stats import compute_stats
 
 overview_stats_titles = ["", "", "Rating", "Average Combat Score", "Kills", "Deaths", "Assists", "Kills - Deaths (KD)",
                         "Kill, Assist, Trade, Survive %", "Average Damage per Round", "Headshot %", "First Kills",
@@ -228,6 +229,7 @@ def extract_overview_stats(overview_stats, games_id, team_mapping, results, list
     team_b = list[5]
     overview_dict = {}
     player_to_team = {}
+    processed_maps = set()
     for index, stats in enumerate(overview_stats):
         id = stats.get("data-game-id")
 
@@ -235,6 +237,15 @@ def extract_overview_stats(overview_stats, games_id, team_mapping, results, list
             map = games_id[id]
         except KeyError: #match is BO1
             continue
+        if map in processed_maps:
+            print(
+                f"Skipping repeated map: "
+                f"{tournament_name} | {match_name} | "
+                f"{map} | Game ID: {id}"
+            )
+            continue
+
+        processed_maps.add(map_name)
         map_dict = overview_dict.setdefault(map, {})
         stats_tables = stats.select("div.ovw-table")
 
@@ -326,25 +337,7 @@ def extract_overview_stats(overview_stats, games_id, team_mapping, results, list
                             if span and span.get_text(strip=True)
                             else pd.NA
                         )
-
-                    all_stat = values["both"]
-                    attack_stat = values["attack"]
-                    defend_stat = values["defend"]
-
-                    if stat_name in player_dict:
-                        all_stat, attack_stat, defend_stat = compute_stats(
-                            all_stat,
-                            attack_stat,
-                            defend_stat,
-                            stat_name,
-                            player_dict
-                        )
-
-                    player_dict[stat_name] = {
-                        "both": all_stat,
-                        "attack": attack_stat,
-                        "defend": defend_stat
-                    }
+                    player_dict[stat_name] = values
     sides = ["both", "attack", "defend"]
     for map_name, team in overview_dict.items():
         for team_name, player in team.items():
@@ -598,7 +591,7 @@ def extract_player_loadouts(loadout_soup, games_id, team_mapping, results, list)
         map_name = games_id.get(str(game_id))
 
         if map_name is None:
-            print(f"Map not found for game ID: {game_id}")
+            print(f"Map not found for game ID for {tournament_name}, {stage_name}, {match_type_name}, {match_name}: {game_id}")
             continue
 
         rounds = game.select(".lg-rounds > .lg-round[data-round]")
@@ -996,36 +989,97 @@ def extract_pick_rates(table_stats_tr, maps_stats_dict, agents_pick_rates_dict, 
     # maps_stats_dict[all_maps] = maps_stats_dict.pop("All Maps")
     # agents_pick_rates_dict[all_maps] = agents_pick_rates_dict.pop("All Maps")
 
-def extract_team_picked_agents(teams_tables, teams_pick_rates_dict, table_titles):
+def extract_team_picked_agents(teams_tables, teams_pick_rates_dict):
+
     for table in teams_tables:
-        logo, map = table.find("tr").find("th").text.replace("\t", "").split()
-        map_dict = teams_pick_rates_dict.setdefault(map, {})
-        teams_pick_rate_tr = table.find_all("tr")[1:]
-        for tr in teams_pick_rate_tr:
-            tr_class = tr.get("class")
-            class_name = " ".join(tr_class)
-            if class_name == "pr-matrix-row":
-                all_tds = tr.find_all("td")
-                filtered_tds = [td for td in all_tds if isinstance(td, Tag)]
-                contained_any_agents = any(td.has_attr('class') and ('mod-picked' in td['class']) for td in filtered_tds)
-                if contained_any_agents:
-                    a_tag = filtered_tds[0].find("a")
-                    team = a_tag.text.strip()
-            elif "mod-dropdown" in class_name:
-                all_tds = tr.find_all("td")
-                filtered_tds = [td for td in all_tds if isinstance(td, Tag)]
-                for index, td in enumerate(filtered_tds):
-                    td_class = td.get("class") or ""
-                    class_name = "".join(td_class)
-                    if class_name == "mod-loss" or class_name == "mod-win":
-                        outcome = class_name.split("-")[-1]
-                    elif class_name == "mod-picked-lite":
-                        agent = table_titles[index]
-                        
-                        team_dict = map_dict.setdefault(team, {"Total Maps Played": 0, "Total Outcomes": {}})
-                        agent_dict = team_dict["Total Outcomes"].setdefault(agent, {"win": 0, "loss": 0})
-                        agent_dict[outcome] += 1
-                team_dict["Total Maps Played"] += 1
+
+        # Extract map name
+        header = table.find("tr")
+        map_name = header.find("th").get_text(" ", strip=True)
+        map_name = re.sub(r"^[A-Z]\s+", "", map_name)
+
+        map_records = teams_pick_rates_dict.setdefault(map_name, [])
+
+        # Extract agent names in the order displayed
+        agents = [
+            img.get("title")
+            for img in header.select("th img[title]")
+        ]
+
+        # Process each team
+        for tr in table.select("tr.pr-matrix-row"):
+
+            team_element = tr.select_one("td a[href^='/team/']")
+
+            if team_element is None:
+                continue
+
+            team = team_element.get_text(" ", strip=True)
+
+            # Extract individual map data
+            script = tr.find("script", type="application/json")
+
+            if script is None or not script.string:
+                continue
+
+            try:
+                matches = json.loads(script.string)
+            except json.JSONDecodeError as e:
+                print(f"JSON error for {team} on {map_name}: {e}")
+                continue
+
+            for match in matches:
+
+                outcome = match.get("result")
+                opponent = match.get("opp_name")
+                picks = match.get("picks", "")
+                link = match.get("link", "")
+
+                if outcome not in ("win", "loss"):
+                    continue
+
+                # Validate agent selections
+                if len(picks) != len(agents):
+                    print(
+                        f"Agent count mismatch for {team} on {map_name}"
+                    )
+                    continue
+
+                selected_agents = sorted([
+                    agent
+                    for agent, picked in zip(agents, picks)
+                    if picked == "1"
+                ])
+
+                if len(selected_agents) != 5:
+                    print(
+                        f"Expected 5 agents, got {len(selected_agents)} "
+                        f"for {team} on {map_name}"
+                    )
+                    continue
+
+                # Extract game ID from the match URL
+                game_id_match = re.search(r"[?&]game=(\d+)", link)
+
+                game_id = (
+                    game_id_match.group(1)
+                    if game_id_match
+                    else None
+                )
+
+                record = {
+                    "Game ID": game_id,
+                    "Team": team,
+                    "Opponent": opponent,
+                    "Result": outcome,
+                    "Agent 1": selected_agents[0],
+                    "Agent 2": selected_agents[1],
+                    "Agent 3": selected_agents[2],
+                    "Agent 4": selected_agents[3],
+                    "Agent 5": selected_agents[4]
+                }
+
+                map_records.append(record)
 
 def extract_players_stats(
     stats_trs, match_type_dict, df,

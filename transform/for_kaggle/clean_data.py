@@ -1,5 +1,5 @@
-from find_csv_files.find_csv_files import find_csv_files
-from data_clean.data_clean import *
+from utilities.find_csv_files import find_csv_files
+from utilities.data_clean.data_clean import *
 import os
 
 def main():
@@ -116,9 +116,6 @@ def main():
     for year, dataframes in ids_result.items():
         for file_name, dataframe in dataframes.items():
             dataframe.to_csv(f"cleaned_data/vct_{year}/ids/{file_name}", encoding="utf-8", index=False)
-
-
-    
 
 
 if __name__ == '__main__':

@@ -1,4 +1,4 @@
-from utilities.WebScraper.fetch import scraping_matches_data
+from utilities.WebScraper.fetch import scraping_matches_data, fetch
 from utilities.WebScraper.retrieve_urls import retrieve_urls
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -9,13 +9,12 @@ import io
 import pandas as pd
 import asyncio
 import aiohttp
-
+import sys
 
 async def main():
-    semaphore_count = 5
-    matches_semaphore = asyncio.Semaphore(semaphore_count)
-    # year = input(f"Input the VCT year: ")
-    year = 2025
+    print(sys.path)
+    year = input(f"Input the VCT year: ")
+    # year = 2025
     start_time = time.time()
 
     now = datetime.now()
@@ -64,22 +63,22 @@ async def main():
     matches_cards = {}
 
     stages_ids = {}
-    for tournament, url in urls.items():
-        page = requests.get(url)
-
-        soup = BeautifulSoup(page.content, "html.parser")
-        stages = soup.find("div", class_="col mod-1").find_all("a")
-        stages_ids[tournament] = {}
-        for stage in stages:
-            stage_name = stage.text.strip()
-            stage_id = stage.get("href").split("/")[-1].split("=")[-1]
-            stages_ids[tournament][stage_name] = stage_id
-        all_cards = soup.select('div.wf-card:not([class*=" "])')
-        modules = []
-        for cards in all_cards:
-            all_modules = cards.find_all("a")
-            modules.extend(all_modules)
-        matches_cards[tournament] = modules
+    async with aiohttp.ClientSession() as session:
+        for tournament, url in urls.items():
+            page = await fetch(url, session)
+            soup = BeautifulSoup(page, "html.parser")
+            stages = soup.find("div", class_="col mod-1").find_all("a")
+            stages_ids[tournament] = {}
+            for stage in stages:
+                stage_name = stage.text.strip()
+                stage_id = stage.get("href").split("/")[-1].split("=")[-1]
+                stages_ids[tournament][stage_name] = stage_id
+            all_cards = soup.select('div.wf-card:not([class*=" "])')
+            modules = []
+            for cards in all_cards:
+                all_modules = cards.find_all("a")
+                modules.extend(all_modules)
+            matches_cards[tournament] = modules
 
     ###original code ends
 
@@ -114,7 +113,17 @@ async def main():
 
 
     async with aiohttp.ClientSession() as session:
-        tasks = [scraping_matches_data(tournament_name, cards, tournaments_ids, stages_ids, matches_semaphore, session) for tournament_name, cards in matches_cards.items()]
+        tasks = [
+            scraping_matches_data(
+                tournament_name,
+                cards,
+                tournaments_ids,
+                stages_ids,
+                session
+            )
+            for tournament_name, cards in matches_cards.items()
+        ]
+
         results = await asyncio.gather(*tasks)
 
 

@@ -1,7 +1,7 @@
 from bs4 import BeautifulSoup
 from datetime import datetime
 from bs4 import BeautifulSoup
-from utilities.WebScraper.fetch import generate_urls_combination, scraping_agents_data
+from utilities.WebScraper.fetch import generate_urls_combination, scraping_agents_data, fetch
 from utilities.WebScraper.retrieve_urls import retrieve_urls
 import pandas as pd
 import time
@@ -14,9 +14,6 @@ import requests
 import numpy as np
 
 async def main():
-    semaphore_count = 5
-    url_semaphore = asyncio.Semaphore(5)
-    pick_rates_semaphore = asyncio.Semaphore(semaphore_count)
     year = input(f"Input the VCT year: ")
     # year = 2025
     # s3_client = boto3.client(
@@ -30,16 +27,19 @@ async def main():
     current_time = now.strftime("%H:%M:%S")
     print("Current Time =", current_time)
     url = f"https://www.vlr.gg/vct-{year}"
-    page = requests.get(url)
-    soup = BeautifulSoup(page.content, "html.parser")
-
     urls = {}
-
-    tournament_cards = soup.find("div", class_="events-container").find_all("div", class_="events-container-col")[-1].find_all("a", class_="wf-card mod-flex event-item")
     tournaments_ids = {}
     stages_ids = {}
     match_types_ids = {}
-    retrieve_urls(urls, tournaments_ids, tournament_cards, "/event/", "/event/agents/")
+    filtered_urls = {}
+    async with aiohttp.ClientSession() as session:
+        page = await fetch(url, session)
+        soup = BeautifulSoup(page, "html.parser")
+
+
+        tournament_cards = soup.find("div", class_="events-container").find_all("div", class_="events-container-col")[-1].find_all("a", class_="wf-card mod-flex event-item")
+
+        retrieve_urls(urls, tournaments_ids, tournament_cards, "/event/", "/event/agents/")
 
     # if os.path.exists("all_ids/all_tournaments_stages_match_types_ids.csv"):
     #     all_tournaments_df = pd.read_csv("all_ids/all_tournaments_stages_match_types_ids.csv")
@@ -55,15 +55,33 @@ async def main():
     #         sys.exit(0)
 
 
-    filtered_urls = {}
 
-    async with aiohttp.ClientSession() as session:
-        tasks = [generate_urls_combination(tournament_name, stages_ids, match_types_ids, url, filtered_urls, url_semaphore, session) for tournament_name, url in urls.items()]
+
+        # Generate URLs
+        tasks = [
+            generate_urls_combination(
+                tournament_name,
+                stages_ids,
+                match_types_ids,
+                url,
+                filtered_urls,
+                session
+            )
+            for tournament_name, url in urls.items()
+        ]
+
         await asyncio.gather(*tasks)
 
+        # Collect agent pick rates
+        tasks = [
+            scraping_agents_data(
+                tournament_name,
+                stages,
+                session
+            )
+            for tournament_name, stages in filtered_urls.items()
+        ]
 
-    async with aiohttp.ClientSession() as session:
-        tasks = [scraping_agents_data(tournament_name, stages, pick_rates_semaphore, session) for tournament_name, stages in filtered_urls.items()]
         results = await asyncio.gather(*tasks)
 
     all_results = {"maps_stats": [],
@@ -97,13 +115,25 @@ async def main():
                                         for agent_name, pick_rate in agents.items():
                                             all_results["agents_pick_rates"].append([tournament_name, stage_name, match_type_name, map_name, agent_name, pick_rate])
                                     
-                                    for map_name, teams in teams_pick_rates.items():
-                                            for team_name, totals in teams.items():
-                                                total_maps_played = totals["Total Maps Played"]
-                                                total_outcomes = totals["Total Outcomes"]
-                                                for agent, outcome in total_outcomes.items():
-                                                    all_results["teams_picked_agents"].append([tournament_name, stage_name, match_type_name, map_name, team_name,
-                                                                                                agent, outcome["win"], outcome["loss"], total_maps_played])
+                                    if stage_name != "All Stages" and match_type_name != "All Match Types":
+
+                                        for map_name, matches in teams_pick_rates.items():
+                                            for match in matches:
+                                                all_results["teams_picked_agents"].append([
+                                                    tournament_name,
+                                                    stage_name,
+                                                    match_type_name,
+                                                    map_name,
+                                                    match["Game ID"],
+                                                    match["Team"],
+                                                    match["Opponent"],
+                                                    match["Result"],
+                                                    match["Agent 1"],
+                                                    match["Agent 2"],
+                                                    match["Agent 3"],
+                                                    match["Agent 4"],
+                                                    match["Agent 5"]
+                                                ])
     
 
     dataframes["maps_stats"] = pd.DataFrame(all_results["maps_stats"],
@@ -111,13 +141,28 @@ async def main():
                                                     "Attacker Side Win Percentage", "Defender Side Win Percentage"])
     dataframes["agents_pick_rates"] = pd.DataFrame(all_results["agents_pick_rates"],
                                                    columns=["Tournament", "Stage", "Match Type", "Map", "Agent", "Pick Rate"])
-    dataframes["teams_picked_agents"] = pd.DataFrame(all_results["teams_picked_agents"],
-                                                     columns=["Tournament", "Stage", "Match Type", "Map", "Team", "Agent",
-                                                            "Total Wins By Map", "Total Loss By Map", "Total Maps Played"])
+    dataframes["teams_picked_agents"] = pd.DataFrame(
+        all_results["teams_picked_agents"],
+        columns=[
+            "Tournament",
+            "Stage",
+            "Match Type",
+            "Map",
+            "Game ID",
+            "Team",
+            "Opponent",
+            "Result",
+            "Agent 1",
+            "Agent 2",
+            "Agent 3",
+            "Agent 4",
+            "Agent 5"
+        ]
+    )
     dataframes["tournaments_stages_match_types_ids"] = pd.DataFrame(all_results["tournaments_stages_match_types_ids"],
                                                                     columns=["Tournament", "Tournament ID", "Stage", "Stage ID", "Match Type", "Match Type ID"])
     
-    for name in ["maps_stats", "agents_pick_rates", "teams_picked_agents"]:
+    for name in ["maps_stats", "agents_pick_rates"]:
         df = dataframes[name]
 
         df["Aggregation Level"] = np.select(

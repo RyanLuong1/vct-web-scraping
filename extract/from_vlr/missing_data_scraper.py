@@ -5,7 +5,7 @@ from utilities.data_clean.data_clean import *
 from utilities.aws_s3.s3_utilities import load_csv_to_dataframe
 import pandas as pd
 import requests
-import boto3
+# import boto3
 
 def main():
     
@@ -24,9 +24,9 @@ def main():
                 "teams_ids": {"Typhone": 3464, "Beşiktaş Esports": 2036},
                 "players_ids": {},
                 "tournaments_stages_matches_games_ids": []}
-    s3_client = boto3.client(
-        's3'
-    )
+    # s3_client = boto3.client(
+    #     's3'
+    # )
 
     bucket_name = "cleaned-data-vct"
     
@@ -105,8 +105,8 @@ def main():
     for file_name, dataframe in dataframes.items():
         csv_buffer = StringIO()
         if file_name == "players_ids" or file_name == "teams_ids":
-            original_df = load_csv_to_dataframe(s3_client, bucket_name, f"vct_2021/ids/{file_name}")
-            # original_df = csv_to_df(f"cleaned_data/vct_2021/ids/{file_name}.csv")
+            # original_df = load_csv_to_dataframe(s3_client, bucket_name, f"vct_2021/ids/{file_name}")
+            original_df = csv_to_df(f"cleaned_data/vct_2021/ids/{file_name}.csv")
             dataframe.reset_index(drop=True, inplace=True)
             original_df.reset_index(drop=True, inplace=True)
             new_df = pd.concat([original_df, dataframe], ignore_index=True)
@@ -118,11 +118,11 @@ def main():
             new_df = convert_to_int(new_df)
             new_df.reset_index(drop=True, inplace=True)
             new_df.to_csv(csv_buffer, index=False)
-            s3_client.put_object(Bucket="cleaned-data-vct", Key=f"{file_name}.csv", Body=csv_buffer.getvalue())
-            # original_df.to_csv(f"cleaned_data/vct_2021/ids/{file_name}.csv", index=False)
+            # s3_client.put_object(Bucket="cleaned-data-vct", Key=f"{file_name}.csv", Body=csv_buffer.getvalue())
+            original_df.to_csv(f"cleaned_data/vct_2021/ids/{file_name}.csv", index=False)
         elif file_name == "tournaments_stages_matches_games_ids":
-            original_df = load_csv_to_dataframe(s3_client, bucket_name, f"vct_2021/ids/{file_name}")
-            # original_df = csv_to_df(f"cleaned_data/vct_2021/ids/{file_name}.csv")
+            # original_df = load_csv_to_dataframe(s3_client, bucket_name, f"vct_2021/ids/{file_name}")
+            original_df = csv_to_df(f"cleaned_data/vct_2021/ids/{file_name}.csv")
             first_occurence_index = original_df.index[
                 (original_df["Tournament"] == dataframe.loc[0, "Tournament"]) &
                 (original_df["Stage"] == dataframe.loc[0, "Stage"]) &
@@ -133,20 +133,20 @@ def main():
             new_df = convert_to_int(new_df)
             new_df.reset_index(drop=True, inplace=True)
             new_df.to_csv(csv_buffer, index=False)
-            s3_client.put_object(Bucket="cleaned-data-vct", Key=f"{file_name}.csv", Body=csv_buffer.getvalue())
-            # original_df.to_csv(f"cleaned_data/vct_2021/ids/{file_name}.csv", index=False)
+            # s3_client.put_object(Bucket="cleaned-data-vct", Key=f"{file_name}.csv", Body=csv_buffer.getvalue())
+            original_df.to_csv(f"cleaned_data/vct_2021/ids/{file_name}.csv", index=False)
         elif file_name == "team_mapping":
-            original_df = load_csv_to_dataframe(s3_client, bucket_name, f"vct_2021/matches/{file_name}")
-            # original_df = csv_to_df(f"cleaned_data/vct_2021/matches/{file_name}.csv")
+            # original_df = load_csv_to_dataframe(s3_client, bucket_name, f"vct_2021/matches/{file_name}")
+            original_df = csv_to_df(f"cleaned_data/vct_2021/matches/{file_name}.csv")
             new_df = pd.concat([original_df, dataframe], ignore_index=True)
             new_df.drop_duplicates(inplace=True, subset=["Abbreviated", "Full Name"])
             new_df.reset_index(drop=True, inplace=True)
             new_df.to_csv(csv_buffer, index=False)
-            s3_client.put_object(Bucket="cleaned-data-vct", Key=f"{file_name}.csv", Body=csv_buffer.getvalue())
-            # original_df.to_csv(f"cleaned_data/vct_2021/matches/{file_name}.csv", index=False)
+            # s3_client.put_object(Bucket="cleaned-data-vct", Key=f"{file_name}.csv", Body=csv_buffer.getvalue())
+            original_df.to_csv(f"cleaned_data/vct_2021/matches/{file_name}.csv", index=False)
         else:
-            original_df = load_csv_to_dataframe(s3_client, bucket_name, f"vct_2021/matches/{file_name}")
-            # original_df = csv_to_df(f"cleaned_data/vct_2021/matches/{file_name}.csv")
+            # original_df = load_csv_to_dataframe(s3_client, bucket_name, f"vct_2021/matches/{file_name}")
+            original_df = csv_to_df(f"cleaned_data/vct_2021/matches/{file_name}.csv")
             first_occurence_index = original_df.index[
                 (original_df["Tournament"] == dataframe.loc[0, "Tournament"]) &
                 (original_df["Stage"] == dataframe.loc[0, "Stage"]) &
@@ -157,8 +157,8 @@ def main():
             new_df = convert_to_float(new_df)
             new_df = convert_to_int(new_df)
             new_df.to_csv(csv_buffer, index=False)
-            s3_client.put_object(Bucket="cleaned-data-vct", Key=f"{file_name}.csv", Body=csv_buffer.getvalue())
-            # original_df.to_csv(f"cleaned_data/vct_2021/matches/{file_name}.csv", index=False)
+            # s3_client.put_object(Bucket="cleaned-data-vct", Key=f"{file_name}.csv", Body=csv_buffer.getvalue())
+            original_df.to_csv(f"cleaned_data/vct_2021/matches/{file_name}.csv", index=False)
 
 
 
