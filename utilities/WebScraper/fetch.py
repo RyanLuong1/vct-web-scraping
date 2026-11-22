@@ -15,7 +15,7 @@ from aiolimiter import AsyncLimiter
 import time
 import statistics
 
-rate_limiter = AsyncLimiter(5, 0.5)
+rate_limiter = AsyncLimiter(5, 1.5)
 request_semaphore = asyncio.Semaphore(5)
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -199,221 +199,367 @@ async def generate_urls_combination(tournament_name, stages_ids, match_types_ids
 
 
 
+
 async def scraping_card_data(tournament_name, card, tournaments_ids, stages_ids, session):
-    match_type_name, stage_name = card.find("div", class_="match-item-event text-of").text.strip().splitlines()
+    match_type_name, stage_name = card.find(
+        "div", class_="match-item-event text-of"
+    ).text.strip().splitlines()
+
     match_type_name = match_type_name.strip("\t")
     stage_name = stage_name.strip("\t")
+
     if match_type_name == "Showmatch":
         return {}
+
+    results = {
+        "scores": [],
+        "maps_played": [],
+        "maps_scores": [],
+        "draft_phase": [],
+        "win_loss_methods_count": [],
+        "win_loss_methods_round_number": [],
+        "overview": [],
+        "kills": [],
+        "kills_stats": [],
+        "rounds_kills": [],
+        "eco_stats": [],
+        "eco_rounds": [],
+        "player_loadouts": [],
+        "teams_ids": {},
+        "players_ids": {},
+        "tournaments_stages_matches_games_ids": []
+    }
+
+    tournament_id = tournaments_ids.get(tournament_name, 0)
+    stage_id = stages_ids.get(tournament_name, {}).get(stage_name, 0)
+
+    teams = card.find("div", class_="match-item-vs").find_all(
+        recursive=False
+    )
+
+    team_a = teams[0].find("div").text.strip()
+    team_b = teams[1].find("div").text.strip()
+
+    if not team_a:
+        team_a = "TBD"
+
+    if not team_b:
+        team_b = "TBD"
+
+    match_name = f"{team_a} vs {team_b}"
+
+    try:
+        team_a_score = int(
+            teams[0].find(
+                "div", class_="match-item-vs-team-score"
+            ).text.strip()
+        )
+        team_b_score = int(
+            teams[1].find(
+                "div", class_="match-item-vs-team-score"
+            ).text.strip()
+        )
+    except (AttributeError, ValueError):
+        print(
+            f"N/A SCORE: {tournament_name} | {stage_name} | "
+            f"{match_type_name} | {match_name}"
+        )
+        return {}
+
+    if team_a_score > team_b_score:
+        match_result = f"{team_a} won"
+    elif team_b_score > team_a_score:
+        match_result = f"{team_b} won"
+    elif team_a_score == 0 and team_b_score == 0:
+        print(
+            f"No score: {tournament_name} | {stage_name} | "
+            f"{match_type_name} | {match_name}"
+        )
+        return {}
+    elif "mod-winner" in teams[0].get("class", []):
+        match_result = f"{team_a} won"
+    elif "mod-winner" in teams[1].get("class", []):
+        match_result = f"{team_b} won"
     else:
-        results = {"scores": [],
-            "maps_played": [],
-            "maps_scores": [],
-            "draft_phase": [],
-            "win_loss_methods_count": [],
-            "win_loss_methods_round_number": [],
-            "overview": [],
-            "kills": [],
-            "kills_stats": [],
-            "rounds_kills": [],
-            "eco_stats": [],
-            "eco_rounds": [],
-            "player_loadouts": [],
-            "teams_ids": {},
-            "players_ids": {},
-            "tournaments_stages_matches_games_ids": []}
+        match_result = "Draw"
 
-        try:
-            tournament_id = tournaments_ids[tournament_name]
-        except KeyError:
-            tournament_id = 0000
-            
-        try:    
-            stage_id = stages_ids[tournament_name][stage_name]
-        except KeyError:
-            stage_id = 0000
-        teams = card.find("div", class_="match-item-vs").find_all(recursive=False)
+    results["scores"].append([
+        tournament_name, stage_name, match_type_name,
+        match_name, team_a, team_b,
+        team_a_score, team_b_score, match_result
+    ])
 
+    # print(
+    #     "Starting collecting for",
+    #     tournament_name, stage_name, match_type_name, match_name
+    # )
 
-        team_a = teams[0].find("div").text.strip("\n").strip("\t").strip()
+    url = card.get("href")
+    match_id = url.split("/")[1]
+    base_url = f"https://vlr.gg{url}"
 
-        if not team_a:
-            team_a = "TBD"
+    team_mapping = {}
 
-        team_b = teams[1].find("div").text.strip("\n").strip("\t").strip()
+    match_info = [
+        tournament_name, stage_name, match_type_name,
+        match_name, team_a, team_b
+    ]
 
-        if not team_b:
-            team_b = "TBD"
-            
-        match_name = f"{team_a} vs {team_b}"
+    # --------------------------------------------------
+    # 1. START ALL DOWNLOADS CONCURRENTLY
+    # --------------------------------------------------
 
-        try:
-            team_a_score = int(teams[0].find("div", class_="match-item-vs-team-score").text.strip())
-        except (AttributeError, ValueError): #match was foreited
-            print(f"N/A SCORE FROM {team_a}")
-            print(f"{tournament_name}, {stage_name}, {match_type_name}, {match_name}, match was foreited")
-            return {}
-        try:
-            team_b_score = int(teams[1].find("div", class_="match-item-vs-team-score").text.strip())
-        except (AttributeError, ValueError): #match was foreited
-            print(f"N/A SCORE FROM {team_b}")
-            print(f"{tournament_name}, {stage_name}, {match_type_name}, {match_name}, match was foreited")
-            return {}
-        match_result = f""
-        if team_a_score > team_b_score:
-            match_result = f"{team_a} won"
-        elif team_b_score > team_a_score:
-            match_result = f"{team_b} won"
-        elif team_a_score == 0 and team_b_score == 0:
-            print(f"No score from {team_a} and {team_b} Score: {team_a_score} - {team_b_score}")
-            print(f"{tournament_name}, {stage_name}, {match_type_name}, {match_name}, match was foreited")
-            return {}
+    download_tasks = [
+        asyncio.create_task(
+            fetch(base_url, session)
+        ),
+        asyncio.create_task(
+            fetch(f"{base_url}/?game=all&tab=performance", session)
+        ),
+        asyncio.create_task(
+            fetch(f"{base_url}/?game=all&tab=economy", session)
+        ),
+        asyncio.create_task(
+            fetch(f"{base_url}/?game=all&tab=logs", session)
+        )
+    ]
 
-        elif team_a_score == team_b_score:
-            if "mod-winner" in teams[0].get("class", []):
-                match_result = f"{team_a} won"
-            elif "mod-winner" in teams[1].get("class", []):
-                match_result = f"{team_b} won"
-            else:
-                match_result = f"Draw"
-        team_mapping = {}
-        try:
-            results["scores"].append([tournament_name, stage_name, match_type_name, match_name, team_a, team_b, team_a_score, team_b_score, match_result])
-        except UnboundLocalError:
-            print(f"{team_a} {team_a_score} {team_b} {team_b_score}")
-            print(f"{tournament_name} {stage_name} {match_type_name} {match_name}")
-        print("Starting collecting for ",tournament_name, stage_name, match_type_name, match_name)
-        url = card.get("href")
-        match_id = url.split("/")[1]
-        #original code
-        try:
-            match_page = await fetch(f'https://vlr.gg{url}', session)
-        except MaxReentriesReached as e:
-            print(f"Error: {e}")
-            sys.exit(1)
-        #end of original code
+    overview_task, performance_task, economy_task, loadout_task = download_tasks
 
-        #testing code
-        # with open("overview.html", "r", encoding="utf-8") as file:
-        #     match_soup = BeautifulSoup(file, "html.parser")
-        #end of testing code
+    try:
+        # --------------------------------------------------
+        # 2. WAIT FOR OVERVIEW AND EXTRACT GAME IDS FIRST
+        # --------------------------------------------------
 
-        #original code
+        match_page = await overview_task
         match_soup = BeautifulSoup(match_page, "html.parser")
-        #dont forget to uncomment it
-        team_ids_div = match_soup.find("div", class_="match-header-vs").find_all("a")
+
+        team_ids_div = match_soup.find(
+            "div", class_="match-header-vs"
+        ).find_all("a")
 
         team_a_id = team_ids_div[0].get("href")
-
-        if team_a_id:
-            team_a_id = team_a_id.split("/")[2]
-        else:
-            team_a_id = pd.NA
-
         team_b_id = team_ids_div[1].get("href")
 
-        if team_b_id:
-            team_b_id = team_b_id.split("/")[2]
-        else:
-            team_b_id = pd.NA
+        team_a_id = (
+            team_a_id.split("/")[2]
+            if team_a_id else pd.NA
+        )
+        team_b_id = (
+            team_b_id.split("/")[2]
+            if team_b_id else pd.NA
+        )
+
         results["teams_ids"][team_a] = team_a_id
         results["teams_ids"][team_b] = team_b_id
-        
-        
+
         try:
-            overview_stats = match_soup.find_all("div", class_="vm-stats-game")
-            # overview_tables = overview_stats[1].find_all("div", class_="ovw-table")
+            overview_stats = match_soup.find_all(
+                "div", class_="vm-stats-game"
+            )
+
             team_tags = match_soup.select(".ovw-player-tag")
+
             teams_abbriev = list(dict.fromkeys(
-                tag.get_text(strip=True) for tag in team_tags
+                tag.get_text(strip=True)
+                for tag in team_tags
             ))
+
             team_a_abbriev, team_b_abbriev = teams_abbriev
-            # try:
-            #     team_a_row = overview_tables[0]
-            #     team_a_abbriev = team_a_row.find_all("div", class_="ovw-row")[0].find("ovw-cell mod-player").find("ovw-player-tag ge-text-light")
-            # except AttributeError: #abbrievated name for team a was not found which means the players name will be missing
-            #     print(f"Couldn't find the abbrievated name for {team_a}")
-            #     print(f"{tournament_name}, {stage_name}, {match_type_name}, {match_name}")
-            #     team_a_abbriev = team_a
-
-            
-            # try:
-            #     team_b_row = overview_tables[1]
-            #     team_b_abbriev = team_b_row.find("ovw-player-tag ge-text-light").text.strip()
-            # except AttributeError: #abbrievated name for team b was not found which means the players name will be missing
-            #     print(f"Couldn't find the abbrievated name for {team_b}")
-            #     print(f"{tournament_name}, {stage_name}, {match_type_name}, {match_name}")
-            #     team_b_abbriev = team_b
-
 
             if team_a_abbriev not in team_mapping:
                 team_mapping[team_a_abbriev] = team_a
-            
+
             if team_b_abbriev not in team_mapping:
                 team_mapping[team_b_abbriev] = team_b
+
             games_id = {}
-            try:
-                games_id_divs = match_soup.select("div.vm-stats-gamesnav a")
-                extract_games_id(games_id_divs, games_id, results, [tournament_name, stage_name, match_type_name, match_name, tournament_id, stage_id, match_id])
-            except AttributeError: #only 1 map played
-                print(f"Only one game was played")
-                map_name = overview_stats[0].find("div", class_="map").text.strip().split("\t")[0]
+
+            games_id_divs = match_soup.select(
+                "div.vm-stats-gamesnav a"
+            )
+
+            if games_id_divs:
+                extract_games_id(
+                    games_id_divs,
+                    games_id,
+                    results,
+                    [
+                        tournament_name, stage_name,
+                        match_type_name, match_name,
+                        tournament_id, stage_id, match_id
+                    ]
+                )
+            else:
+                print("Only one game was played")
+
+                map_name = overview_stats[0].find(
+                    "div", class_="map"
+                ).text.strip().split("\t")[0]
+
                 if not map_name or map_name == "TBD":
                     map_name = pd.NA
-                id = overview_stats[0].get("data-game-id")
-                games_id[id] = map_name
-                results["maps_played"].append([tournament_name, stage_name, match_type_name, match_name, map_name])
-                results["tournaments_stages_matches_games_ids"].append([tournament_name, tournament_id, stage_name, stage_id, match_type_name, match_name, match_id, map_name, id])
-            maps_notes = match_soup.find_all("div", class_="match-header-note")
-            extract_maps_notes(maps_notes, results, team_mapping, [tournament_name, stage_name, match_type_name, match_name])
-            
-            extract_methods(overview_stats, games_id, results, [tournament_name, stage_name, match_type_name, match_name, team_a, team_b])
 
+                game_id = overview_stats[0].get("data-game-id")
+                games_id[game_id] = map_name
 
-            maps_headers = match_soup.find_all("div", class_="vm-stats-game-header")
-            extract_maps_headers(maps_headers, results, [tournament_name, stage_name, match_type_name, match_name, team_a, team_b])
+                results["maps_played"].append([
+                    tournament_name, stage_name,
+                    match_type_name, match_name, map_name
+                ])
 
-            player_to_team = extract_overview_stats(overview_stats, games_id, team_mapping, results, [tournament_name, stage_name, match_type_name, match_name, team_a, team_b])
+                results["tournaments_stages_matches_games_ids"].append([
+                    tournament_name, tournament_id,
+                    stage_name, stage_id,
+                    match_type_name, match_name,
+                    match_id, map_name, game_id
+                ])
+
+            # Game IDs have now been extracted.
+            # Other downloads are already running.
+
+            maps_notes = match_soup.find_all(
+                "div", class_="match-header-note"
+            )
+
+            extract_maps_notes(
+                maps_notes,
+                results,
+                team_mapping,
+                [
+                    tournament_name, stage_name,
+                    match_type_name, match_name
+                ]
+            )
+
+            extract_methods(
+                overview_stats,
+                games_id,
+                results,
+                match_info
+            )
+
+            maps_headers = match_soup.find_all(
+                "div", class_="vm-stats-game-header"
+            )
+
+            extract_maps_headers(
+                maps_headers,
+                results,
+                match_info
+            )
+
+            player_to_team = extract_overview_stats(
+                overview_stats,
+                games_id,
+                team_mapping,
+                results,
+                match_info
+            )
+
         except IndexError:
-            print(f"ERROR FROM SCRAPING OVERVIEW PAGE")
-            print(f"{tournament_name}, {stage_name}, {match_type_name}, {match_name}, the match was forfeited")
-            traceback_info = traceback.format_exc()
-            print(traceback_info)
+            print("ERROR FROM SCRAPING OVERVIEW PAGE")
+            print(
+                f"{tournament_name}, {stage_name}, "
+                f"{match_type_name}, {match_name}"
+            )
+            print(traceback.format_exc())
             return {}
 
-        try:
-            performance_page = await fetch(f'https://vlr.gg{url}/?game=all&tab=performance', session)
-        except MaxReentriesReached as e:
-            print(f"Error: {e}")
-            sys.exit(1)
-        performance_soup = BeautifulSoup(performance_page, "html.parser")
-        performance_stats_div = performance_soup.select("div.vm-stats-game")
+        # --------------------------------------------------
+        # 3. WAIT FOR REMAINING DOWNLOADS
+        # --------------------------------------------------
 
-        extract_kills_stats(performance_stats_div, games_id, team_mapping, player_to_team, results, [tournament_name, stage_name, match_type_name, match_name, team_a, team_b])
+        performance_page, economy_page, loadout_page = await asyncio.gather(
+            performance_task,
+            economy_task,
+            loadout_task
+        )
 
-            
-        try:
-            economy_page = await fetch(f'https://vlr.gg{url}/?game=all&tab=economy', session)
-        except MaxReentriesReached as e:
-            print(f"Error: {e}")
-            sys.exit(1)
-        economy_soup = BeautifulSoup(economy_page, "html.parser")
+        # --------------------------------------------------
+        # 4. EXTRACT PERFORMANCE STATISTICS
+        # --------------------------------------------------
 
-        economy_stats_div = economy_soup.select("div.vm-stats-game")
-        # eco_stats, eco_rounds_stats = extract_economy_stats_div(economy_stats_div)
-        extract_economy_stats(economy_stats_div, games_id, team_mapping, results, [tournament_name, stage_name, match_type_name, match_name, team_a, team_b])
+        performance_soup = BeautifulSoup(
+            performance_page, "html.parser"
+        )
 
+        performance_stats_div = performance_soup.select(
+            "div.vm-stats-game"
+        )
 
-        try:
-            loadout_page = await fetch(f"https://vlr.gg{url}/?game=all&tab=logs", session)
-        except MaxReentriesReached as e:
-            print(f"Error: {e}")
-            sys.exit(1)
-        loadout_soup = BeautifulSoup(loadout_page, "html.parser")
-        extract_player_loadouts(loadout_soup, games_id, team_mapping, results, [tournament_name, stage_name, match_type_name, match_name])
+        extract_kills_stats(
+            performance_stats_div,
+            games_id,
+            team_mapping,
+            player_to_team,
+            results,
+            match_info
+        )
 
-    results["team_mapping"] = team_mapping
-    return results
+        # --------------------------------------------------
+        # 5. EXTRACT ECONOMY STATISTICS
+        # --------------------------------------------------
+
+        economy_soup = BeautifulSoup(
+            economy_page, "html.parser"
+        )
+
+        economy_stats_div = economy_soup.select(
+            "div.vm-stats-game"
+        )
+
+        extract_economy_stats(
+            economy_stats_div,
+            games_id,
+            team_mapping,
+            results,
+            match_info
+        )
+
+        # --------------------------------------------------
+        # 6. EXTRACT LOADOUT STATISTICS
+        # --------------------------------------------------
+
+        loadout_soup = BeautifulSoup(
+            loadout_page, "html.parser"
+        )
+
+        extract_player_loadouts(
+            loadout_soup,
+            games_id,
+            team_mapping,
+            results,
+            [
+                tournament_name, stage_name,
+                match_type_name, match_name
+            ]
+        )
+
+        results["team_mapping"] = team_mapping
+
+        return results
+
+    except MaxReentriesReached as e:
+        print(
+            f"Download failed: {tournament_name} | "
+            f"{match_name} | {e}"
+        )
+        raise
+
+    finally:
+        # Cancel any downloads still running if extraction
+        # fails or the function returns early.
+        for task in download_tasks:
+            if not task.done():
+                task.cancel()
+
+        # Collect task exceptions and finish cancellation.
+        await asyncio.gather(
+            *download_tasks,
+            return_exceptions=True
+        )
+
 
 
 

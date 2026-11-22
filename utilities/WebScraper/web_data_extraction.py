@@ -245,7 +245,7 @@ def extract_overview_stats(overview_stats, games_id, team_mapping, results, list
             )
             continue
 
-        processed_maps.add(map_name)
+        processed_maps.add(map)
         map_dict = overview_dict.setdefault(map, {})
         stats_tables = stats.select("div.ovw-table")
 
