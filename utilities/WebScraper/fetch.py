@@ -15,7 +15,7 @@ from aiolimiter import AsyncLimiter
 import time
 import statistics
 
-rate_limiter = AsyncLimiter(5, 1.5)
+rate_limiter = AsyncLimiter(5, 0.5)
 request_semaphore = asyncio.Semaphore(5)
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 

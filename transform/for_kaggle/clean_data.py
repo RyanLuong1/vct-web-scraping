@@ -1,122 +1,174 @@
-from utilities.find_csv_files import find_csv_files
+from pathlib import Path
 from utilities.data_clean.data_clean import *
-import os
+
+
+# Project root directory
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# Input and output directories
+RAW_DATA_DIR = PROJECT_ROOT
+CLEANED_DATA_DIR = PROJECT_ROOT / "cleaned_data"
+
+
+def clean_matches(df, file_name, year):
+    df = remove_white_spaces(df)
+    df = remove_white_spaces_in_between(df)
+    df = remove_tabs_and_newlines(df)
+    df = remove_forfeited_matches(df)
+    df = remove_nan_players_agents(df)
+    df = add_missing_abbriev(df, year)
+    df = update_player_names(df)
+    df = update_team_names(df)
+    df = update_match_names(df)
+    df = fixed_team_names(df)
+    df = fixed_player_names(df)
+    df = fixed_match_names(df)
+    df = convert_nan_players_teams(df)
+
+    if file_name == "kills_stats.csv":
+        df = get_all_agents_played_for_kills_stats(df)
+
+    # elif file_name == "rounds_kills.csv":
+    #     df = extract_round_number(df)
+
+    df = convert_to_float(df)
+    df = convert_to_int(df)
+    df = convert_to_str(df)
+
+    return df
+
+
+def clean_agents(df, year):
+    df = remove_white_spaces(df)
+    df = remove_white_spaces_in_between(df)
+    df = remove_tabs_and_newlines(df)
+    df = update_player_names(df)
+    df = update_team_names(df)
+    df = update_match_names(df)
+    df = fixed_team_names(df)
+    df = fixed_player_names(df)
+    df = convert_nan_players_teams(df)
+    df = convert_to_str(df)
+
+    return df
+
+
+def clean_players_stats(df, year):
+    df = remove_white_spaces(df)
+    df = remove_white_spaces_in_between(df)
+    df = remove_tabs_and_newlines(df)
+    df = convert_nan_players_teams(df)
+    df = update_player_names(df)
+    df = update_team_names(df)
+    df = update_match_names(df)
+    df = fixed_team_names(df)
+    df = fixed_player_names(df)
+    df = convert_to_float(df)
+    df = convert_to_int(df)
+    df = convert_to_str(df)
+
+    return df
+
+
+def clean_ids(df, year):
+    df = remove_white_spaces(df)
+    df = remove_white_spaces_in_between(df)
+    df = remove_tabs_and_newlines(df)
+    df = update_player_names(df)
+    df = update_team_names(df)
+    df = update_match_names(df)
+    df = add_missing_player(df, year)
+    df = add_missing_matches_id(df, year)
+    df = fixed_match_names(df)
+    df = convert_to_int(df)
+    df = convert_to_str(df)
+
+    return df
+
+
+def process_csv_files(year, category, cleaning_function):
+    """
+    Reads CSV files from:
+        vct_YYYY/category/
+
+    Cleans and saves each file to:
+        cleaned_data/vct_YYYY/category/
+    """
+
+    input_dir = RAW_DATA_DIR / f"vct_{year}" / category
+    output_dir = CLEANED_DATA_DIR / f"vct_{year}" / category
+
+    # Check whether the input directory exists
+    if not input_dir.is_dir():
+        print(f"Input directory not found: {input_dir}")
+        return
+
+    # Find all CSV files recursively
+    csv_files = sorted(input_dir.rglob("*.csv"))
+
+    if not csv_files:
+        print(f"No CSV files found in {input_dir}")
+        return
+
+    # Create output directory if necessary
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for file_path in csv_files:
+        file_name = file_path.name
+
+        print(f"Cleaning: {year} | {category} | {file_name}")
+
+        # Read CSV into DataFrame
+        df = csv_to_df(str(file_path))
+
+        # Apply category-specific cleaning
+        if category == "matches":
+            df = cleaning_function(df, file_name, year)
+        else:
+            df = cleaning_function(df, year)
+
+        # Preserve relative directory structure
+        relative_path = file_path.relative_to(input_dir)
+        output_path = output_dir / relative_path
+
+        # Create subdirectories if needed
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Save cleaned CSV
+        df.to_csv(
+            output_path,
+            encoding="utf-8",
+            index=False
+        )
+
+        print(f"Saved: {output_path}")
+
+        # Release reference to the DataFrame
+        del df
+
 
 def main():
     years = [2026]
 
-    matches_csv_files = [find_csv_files(f"{os.getcwd()}/vct_{year}/matches", "matches", year) for year in years]
+    cleaning_functions = {
+        "matches": clean_matches,
+        "agents": clean_agents,
+        "players_stats": clean_players_stats,
+        "ids": clean_ids
+    }
 
-    matches_result = {year: {} for year in years}
-    for i, file_list in enumerate(matches_csv_files):
-        year = years[i]
-        for file in file_list:
-            file_name = file.split("/")[2]
-            df = csv_to_df(file)
-            df = remove_white_spaces(df)
-            df = remove_white_spaces_in_between(df)
-            df = remove_tabs_and_newlines(df)
-            df = remove_forfeited_matches(df)
-            df = remove_nan_players_agents(df)
-            df = add_missing_abbriev(df, year)
-            df = update_player_names(df)
-            df = update_team_names(df)
-            df = update_match_names(df)
-            df = fixed_team_names(df)
-            df = fixed_player_names(df)
-            df = fixed_match_names(df)
-            df = convert_nan_players_teams(df)
-            if file_name == "kills_stats.csv":
-                df = get_all_agents_played_for_kills_stats(df)
-            elif file_name == "rounds_kills.csv":
-                print(year)
-                df = extract_round_number(df)
-            df = convert_to_float(df)
-            df = convert_to_int(df)
-            df = convert_to_str(df)    
-            matches_result[year][file_name] = df
-    for year, dataframes in matches_result.items():
-        for file_name, dataframe in dataframes.items():
-            if year == 2025 and file_name == "eco_rounds.csv":
-                filtered_dataframe = dataframe[dataframe['Tournament'] == 'Valorant Masters Toronto 2025']
-                eco_round_df = pd.read_csv(f"cleaned_data/vct_2025/matches/eco_rounds_copy.csv")
-                dataframe = pd.concat(
-                    [filtered_dataframe, eco_round_df],   # order matters: put filtered_df first
-                    ignore_index=True,         # re‑number rows 0…N‑1; drop if you want to keep originals
-                    sort=False                 # keeps column order; prevents sort warning when cols differ
-                    )
-            dataframe.to_csv(f"cleaned_data/vct_{year}/matches/{file_name}", encoding="utf-8", index=False)
+    for year in years:
+        print(f"\n========== Cleaning VCT {year} ==========\n")
 
-    agents_stats_csv_files = [find_csv_files(f"{os.getcwd()}/vct_{year}/agents", "agents", year) for year in years]
-    print(agents_stats_csv_files)
-    agents_result = {year: {} for year in years}
-    for i, file_list in enumerate(agents_stats_csv_files):
-        year = years[i]
-        for file in file_list:
-            file_name = file.split("/")[2]
-            df = csv_to_df(file)
-            df = remove_white_spaces(df)
-            df = remove_white_spaces_in_between(df)
-            df = remove_tabs_and_newlines(df)
-            df = update_player_names(df)
-            df = update_team_names(df)
-            df = update_match_names(df)
-            df = fixed_team_names(df)
-            df = fixed_player_names(df)
-            df = convert_nan_players_teams(df)
-            df = convert_to_str(df)
-            agents_result[year][file_name] = df
-    for year, dataframes in agents_result.items():
-        for file_name, dataframe in dataframes.items():
-            dataframe.to_csv(f"cleaned_data/vct_{year}/agents/{file_name}", encoding="utf-8", index=False)
+        for category, cleaning_function in cleaning_functions.items():
+            process_csv_files(
+                year,
+                category,
+                cleaning_function
+            )
 
-    players_stats_csv_files = [find_csv_files(f"{os.getcwd()}/vct_{year}/players_stats", "players_stats", year) for year in years]
-    players_result = {year: {} for year in years}
-    for i, file_list in enumerate(players_stats_csv_files):
-        year = years[i]
-        for file in file_list:
-            file_name = file.split("/")[2]
-            df = csv_to_df(file)
-            df = remove_white_spaces(df)
-            df = remove_white_spaces_in_between(df)
-            df = remove_tabs_and_newlines(df)
-            df = convert_nan_players_teams(df)
-            df = update_player_names(df)
-            df = update_team_names(df)
-            df = update_match_names(df)
-            df = fixed_team_names(df)
-            df = fixed_player_names(df)
-            df = convert_to_float(df)
-            df = convert_to_int(df)
-            df = convert_to_str(df)
-            players_result[year][file_name] = df
-    for year, dataframes in players_result.items():
-        for file_name, dataframe in dataframes.items():
-            dataframe.to_csv(f"cleaned_data/vct_{year}/players_stats/{file_name}", encoding="utf-8", index=False)
-
-    ids_csv_files = [find_csv_files(f"{os.getcwd()}/vct_{year}/ids", "ids", year) for year in years]
-    ids_result = {year: {} for year in years}
-    for i, file_list in enumerate(ids_csv_files):
-        year = years[i]
-        for file in file_list:
-            file_name = file.split("/")[2]
-            df = csv_to_df(file)
-            df = remove_white_spaces(df)
-            df = remove_white_spaces_in_between(df)
-            df = remove_tabs_and_newlines(df)
-            df = update_player_names(df)
-            df = update_team_names(df)
-            df = update_match_names(df)
-            df = add_missing_player(df, year)
-            df = add_missing_matches_id(df, year)
-            df = fixed_match_names(df)
-            df = convert_to_int(df)
-            df = convert_to_str(df)
-            ids_result[year][file_name] = df
-    for year, dataframes in ids_result.items():
-        for file_name, dataframe in dataframes.items():
-            dataframe.to_csv(f"cleaned_data/vct_{year}/ids/{file_name}", encoding="utf-8", index=False)
+        print(f"\n========== Finished VCT {year} ==========\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

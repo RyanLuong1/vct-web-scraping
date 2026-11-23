@@ -5,7 +5,6 @@ import Levenshtein
 from bs4 import Tag, Comment, BeautifulSoup
 import sys
 import json
-from utilities.compute_stats import compute_stats
 
 overview_stats_titles = ["", "", "Rating", "Average Combat Score", "Kills", "Deaths", "Assists", "Kills - Deaths (KD)",
                         "Kill, Assist, Trade, Survive %", "Average Damage per Round", "Headshot %", "First Kills",

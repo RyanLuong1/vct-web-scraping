@@ -76,20 +76,30 @@ def convert_to_str(df):
     return df
 
 def convert_to_int(df):
-    for column in ["Player ID", "Team ID", "Tournament ID", "Stage ID", "Match Type ID", "Match ID", "Game ID", "Initiated", "Player Kills",
-                   "Enemy Kills", "Difference", "2k", "3k", "4k", "5k", "1v1", "1v2", "1v3", "1v4", "Econ", "Spike Plants", "Spike Defuses",
-                   "Team A Attacker Score", "Team A Defender Score", "Team A Overtime Score", "Team B Attacker Score", "Team B Defender Score",
-                   "Team B Overtime Score", "Average Combat Score", "Kills", "Deaths", "Assists", "Kills - Deaths (KD)","Average Damage Per Round",
-                    "First Kills", "First Deaths", "Kills - Deaths (FKD)"]:
-        if column in df:
-            try:
-                df[column] = df[column].replace("", np.nan)
-                df[column] = pd.to_numeric(df[column].round(), errors="coerce").astype("Int64")
-            except:
-                print(column, df[column].dtype)
-                print(df[column])
-                # decimal_values = df[df[column] % 1 != 0]
-                # print(decimal_values[column])
+    columns = [
+        "Player ID", "Team ID", "Tournament ID", "Stage ID",
+        "Match Type ID", "Match ID", "Game ID", "Initiated",
+        "Player Kills", "Enemy Kills", "Difference",
+        "2k", "3k", "4k", "5k",
+        "1v1", "1v2", "1v3", "1v4",
+        "Econ", "Spike Plants", "Spike Defuses",
+        "Team A Attacker Score", "Team A Defender Score",
+        "Team A Overtime Score", "Team B Attacker Score",
+        "Team B Defender Score", "Team B Overtime Score",
+        "Average Combat Score", "Kills", "Deaths",
+        "Assists", "Kills - Deaths (KD)",
+        "Average Damage Per Round", "First Kills",
+        "First Deaths", "Kills - Deaths (FKD)"
+    ]
+
+    for column in columns:
+        if column in df.columns:
+            df[column] = (
+                pd.to_numeric(df[column], errors="coerce")
+                .round()
+                .astype("Int64")
+            )
+
     return df
 
 def convert_to_float(df):
@@ -168,7 +178,12 @@ def update_player_names(df):
     return df 
 
 def convert_nan_players_teams(df):
-    if "Tournament" in df and "Stage" in df and "Match Type" in df and "Player" in df and "Team" in df or "Teams" in df:
+    if (
+        all(col in df.columns for col in [
+            "Tournament", "Stage", "Match Type", "Player"
+        ])
+        and ("Team" in df.columns or "Teams" in df.columns)
+    ):
         team_col = "Team" if "Team" in df else "Teams"
         player_nan_condition = (df['Tournament'] == 'Champions Tour Philippines Stage 1: Challengers 2') & \
                                (df['Stage'].isin(['All Stages', 'Qualifier 1'])) & \
@@ -307,7 +322,7 @@ def convert_nan_players_teams(df):
         filtered_indices = df.index[tbd_condition]
         df.loc[filtered_indices, "Team"] = "TBD"
 
-    if "Eliminated Team" and "Eliminator Team" in df:
+    if "Eliminated Team" in df.columns and "Eliminator Team" in df.columns:
         null_rows = df[df["Eliminated Team"].isna()]
         eliminated_teams = null_rows.apply(lambda row: get_missing_team(row, "Eliminator Team"), axis=1)
         df.loc[null_rows.index, "Eliminated Team"] = eliminated_teams
@@ -322,12 +337,52 @@ def unique_sorted_agents(agents):
     return ", ".join(list(sorted(set(agents))))
 
 def get_all_agents_played_for_kills_stats(df):
-    filtered_df = df[df["Map"] != "All Maps"]
-    filtered_df = df[["Tournament", "Stage", "Match Type", "Match Name", "Team", "Player", "Agents"]]
-    agents_played_df = filtered_df.groupby(["Tournament", "Stage", "Match Type", "Match Name", "Team", "Player"])["Agents"].agg(unique_sorted_agents).reset_index()
-    merged_df = pd.merge(df, agents_played_df, on=["Tournament", "Stage", "Match Type", "Match Name", "Team", "Player"], how="left")
-    df.loc[df["Map"] == "All Maps", "Agents"] = merged_df["Agents_y"].fillna(merged_df["Agents_x"])
-    # df = df.rename(columns={"Agent": "Agents"})
+    group_cols = [
+        "Tournament",
+        "Stage",
+        "Match Type",
+        "Match Name",
+        "Team",
+        "Player"
+    ]
+
+    # Use individual maps to collect agents played
+    map_stats = df[df["Map"] != "All Maps"]
+
+    # Collect all unique agents played by each player
+    agents_played = (
+        map_stats.groupby(group_cols)["Agents"]
+        .agg(
+            lambda agents: ", ".join(
+                sorted({
+                    agent.strip()
+                    for value in agents.dropna()
+                    for agent in str(value).split(",")
+                    if agent.strip()
+                })
+            )
+        )
+        .reset_index(name="All Agents")
+    )
+
+    # Merge agents back into original DataFrame
+    df = df.merge(
+        agents_played,
+        on=group_cols,
+        how="left"
+    )
+
+    # Update only the All Maps rows
+    mask = df["Map"] == "All Maps"
+
+    df.loc[mask, "Agents"] = (
+        df.loc[mask, "All Agents"]
+        .fillna(df.loc[mask, "Agents"])
+    )
+
+    # Remove temporary column
+    df = df.drop(columns=["All Agents"])
+
     return df
 
 

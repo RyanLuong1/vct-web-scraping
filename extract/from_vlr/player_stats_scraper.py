@@ -109,7 +109,7 @@ async def main():
     #         sys.exit(0)
 
 
-        urls = {'Valorant Champions 2026': 'https://www.vlr.gg/event/stats/2766/valorant-champions-2026'}
+        # urls = {'Valorant Champions 2026': 'https://www.vlr.gg/event/stats/2766/valorant-champions-2026'}
 
 
 
