@@ -47,20 +47,20 @@ Please do not increase the scraping rate on the code to prevent overloading the 
 ## Usage <a name = "usage"></a>
 You must run the commands in this order
 ```
-$ python3 matches_scraper.py
-$ python3 agent_pick_rates_scraper.py
-$ python3 player_stats_scraper.py
+$ python -m extract/from_vlr/matches_scraper
+$ python -m extract/from_vlr/agent_pick_rates_scraper
+$ python -m extract/from_vlr/player_stats_scraper
 ```
 
 If you want to clean the data and you ran the three commands above
 ```
-$ python3 clean_data.py
-$ python3 missing_data_scraper.py #This only need to be run if you are cleaning 2021 data
+$ python -m transform/for_kaggle/clean_data
+$ python -m extract/from_vlr/missing_data_scraper #This only need to be run if you are cleaning 2021 data
 ```
 
 If you want to retrieve all the ids (it is best you perform the data clean steps)
 ```
-$ python3 combine_all_columns_value.py
+$ python combine_all_columns_value.py
 ```
 
 ## Built With <a name="built_with"></a>
